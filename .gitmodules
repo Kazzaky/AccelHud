@@ -1,0 +1,3 @@
+[submodule "cgame_proxymod"]
+	path = cgame_proxymod
+	url = https://github.com/Jelvan1/cgame_proxymod.git
