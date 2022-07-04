@@ -59,7 +59,7 @@ jobs:
       run: cmake --build build
 
     - name: Test
-      working-directory: build
+      working-directory: build/cgame_proxymod
       run: ctest --no-tests=error --output-on-failure
 
     - name: Install
@@ -113,7 +113,7 @@ jobs:
       run: cmake --build build --config ${{ matrix.config }}
 
     - name: Test
-      working-directory: build
+      working-directory: build/cgame_proxymod
       run: ctest --build-config ${{ matrix.config }} --no-tests=error --output-on-failure
 
   ubuntu:
@@ -163,7 +163,7 @@ jobs:
       run: cmake --build build
 
     - name: Test
-      working-directory: build
+      working-directory: build/cgame_proxymod
       run: ctest --no-tests=error --output-on-failure
 
     - name: Install
@@ -229,7 +229,7 @@ jobs:
       run: cmake --build build
 
     - name: Test
-      working-directory: build
+      working-directory: build/cgame_proxymod
       run: ctest --no-tests=error --output-on-failure
 
     - name: Install
