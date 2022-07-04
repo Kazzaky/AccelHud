@@ -1,5 +1,7 @@
 # AccelHud extension to Proxymod
 
+![demo of accel hud](./demo-small.gif)
+
 Please note that the AccelHud is currently only pre-alpha version, might be buggy.
 
 ## Binaries:
