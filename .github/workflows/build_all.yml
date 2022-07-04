@@ -1,0 +1,245 @@
+name: build_all
+
+on: workflow_dispatch
+
+jobs:
+  windows_gcc:
+    name: ${{ matrix.config }} Windows ${{ matrix.arch }}-bit (${{ matrix.c }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        c: [gcc, clang]
+        config: [Debug, Release]
+        arch: [32, 64]
+        include:
+          - arch: 32
+            name: cgamex86
+            msystem: MINGW32
+            prefix: mingw-w64-i686
+          - arch: 64
+            name: cgamex86_64
+            msystem: MINGW64
+            prefix: mingw-w64-x86_64
+          - c: gcc
+            cxx: g++
+          - c: clang
+            cxx: clang++
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+    - uses: msys2/setup-msys2@v2
+      with:
+        install: ${{ matrix.prefix }}-cmake ${{ matrix.prefix }}-ninja ${{ matrix.prefix }}-${{ matrix.c }}
+        msystem: ${{ matrix.msystem }}
+        path-type: minimal
+        release: false
+        update: false
+
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Configure
+      run: cmake
+        -S .
+        -B build
+        -G Ninja
+        -DBINARY_NAME=${{ matrix.name }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+        -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS} -m${{ matrix.arch }}"
+        -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -m${{ matrix.arch }}"
+        -DCMAKE_C_COMPILER=${{ matrix.c }}
+        -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Test
+      working-directory: build
+      run: ctest --no-tests=error --output-on-failure
+
+    - name: Install
+      if: matrix.c == 'gcc' && matrix.config == 'Release'
+      run: cmake --install build --prefix bin --strip
+
+    - uses: actions/upload-artifact@v3
+      if: matrix.c == 'gcc' && matrix.config == 'Release'
+      with:
+        name: artifact
+        path: bin/*.dll
+        if-no-files-found: error
+        retention-days: 5
+
+  windows_msvc:
+    name: ${{ matrix.config }} Windows ${{ matrix.arch }}-bit (MSVC)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+        arch: [32, 64]
+        include:
+          - arch: 32
+            name: cgamex86
+            A: Win32
+          - arch: 64
+            name: cgamex86_64
+            A: x64
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Configure
+      run: cmake
+        -S .
+        -B build
+        -G "Visual Studio 17 2022"
+        -A ${{ matrix.A }}
+        -DBINARY_NAME=${{ matrix.name }}
+        -DCMAKE_C_FLAGS_DEBUG="${CMAKE_C_FLAGS_DEBUG} /MTd"
+        -DCMAKE_CXX_FLAGS_DEBUG="${CMAKE_CXX_FLAGS_DEBUG} /MTd"
+        -DCMAKE_C_FLAGS_RELEASE="${CMAKE_C_FLAGS_RELEASE} /MT"
+        -DCMAKE_CXX_FLAGS_RELEASE="${CMAKE_CXX_FLAGS_RELEASE} /MT"
+        -DCMAKE_C_COMPILER=cl
+        -DCMAKE_CXX_COMPILER=cl
+
+    - name: Build
+      run: cmake --build build --config ${{ matrix.config }}
+
+    - name: Test
+      working-directory: build
+      run: ctest --build-config ${{ matrix.config }} --no-tests=error --output-on-failure
+
+  ubuntu:
+    name: ${{ matrix.config }} Ubuntu ${{ matrix.arch }}-bit (${{ matrix.c }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        c: [gcc, clang]
+        config: [Debug, Release]
+        arch: [32, 64]
+        include:
+          - arch: 32
+            name: cgamei386
+          - arch: 64
+            name: cgamex86_64
+          - c: gcc
+            cxx: g++
+          - c: clang
+            cxx: clang++
+
+    steps:
+    - name: Install tools
+      run: |
+        sudo apt-get -qq update
+        if [ ${{ matrix.arch }} -eq 32 ]; then
+          sudo apt-get -y install gcc-multilib g++-multilib
+        fi
+        sudo apt-get -y install ninja-build
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Configure
+      run: cmake
+        -S .
+        -B build
+        -G Ninja
+        -DBINARY_NAME=${{ matrix.name }}
+        -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+        -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS} -m${{ matrix.arch }}"
+        -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -m${{ matrix.arch }}"
+        -DCMAKE_C_COMPILER=${{ matrix.c }}
+        -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Test
+      working-directory: build
+      run: ctest --no-tests=error --output-on-failure
+
+    - name: Install
+      if: matrix.c == 'gcc' && matrix.config == 'Release'
+      run: cmake --install build --prefix bin --strip
+
+    - uses: actions/upload-artifact@v3
+      if: matrix.c == 'gcc' && matrix.config == 'Release'
+      with:
+        name: artifact
+        path: bin/*.so
+        if-no-files-found: error
+        retention-days: 5
+
+  macos:
+    name: ${{ matrix.config }} macOS 64-bit (${{ matrix.c }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        c: [gcc, clang]
+        config: [Debug, Release]
+        include:
+          - c: gcc
+            cxx: g++
+          - c: clang
+            cxx: clang++
+
+    steps:
+    - name: Install tools
+      run: brew install ninja
+
+    - name: Update compiler
+      id: compiler
+      run: |
+        # see https://github.com/actions/virtual-environments/blob/main/images/macos/macos-11-Readme.md#language-and-runtime
+        if [ ${{ matrix.c }} == gcc ]; then
+          # Apple redirects gcc to clang => explicitly use gcc-11
+          echo "::set-output name=c_compiler::${{ matrix.c }}-11"
+          echo "::set-output name=cxx_compiler::${{ matrix.cxx }}-11"
+        else
+          # clang 13.0.0 hangs while building cg_vm.c (related to branching macro UOP()) => use clang 13.0.1
+          echo "::set-output name=c_compiler::$(brew --prefix llvm)/bin/${{ matrix.c }}"
+          echo "::set-output name=cxx_compiler::$(brew --prefix llvm)/bin/${{ matrix.cxx }}"
+        fi
+    - uses: actions/checkout@v3
+      with:
+        submodules: recursive
+
+    - name: Configure
+      run: cmake
+        -S .
+        -B build
+        -G Ninja
+        -DBINARY_NAME=cgamex86_64
+        -DCMAKE_BUILD_TYPE=${{ matrix.config }}
+        -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS} -m64"
+        -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -m64"
+        -DCMAKE_C_COMPILER=${{ steps.compiler.outputs.c_compiler }}
+        -DCMAKE_CXX_COMPILER=${{ steps.compiler.outputs.cxx_compiler }}
+
+    - name: Build
+      run: cmake --build build
+
+    - name: Test
+      working-directory: build
+      run: ctest --no-tests=error --output-on-failure
+
+    - name: Install
+      if: matrix.c == 'clang' && matrix.config == 'Release'
+      run: cmake --install build --prefix bin --strip
+
+    - uses: actions/upload-artifact@v3
+      if: matrix.c == 'clang' && matrix.config == 'Release'
+      with:
+        name: artifact
+        path: bin/*.dylib
+        if-no-files-found: error
+        retention-days: 5
