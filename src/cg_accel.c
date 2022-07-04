@@ -653,8 +653,8 @@ static void PM_WalkMove( void ) {
     if ( a.pm.waterlevel ) {
         float	waterScale;
 
-        waterScale = a.pm.waterlevel / 3.0;
-        waterScale = 1.0 - ( 1.0 - pm_swimScale ) * waterScale;
+        waterScale = a.pm.waterlevel / 3.0f;
+        waterScale = 1.0f - ( 1.0f - pm_swimScale ) * waterScale;
         if ( wishspeed > a.pm_ps.speed * waterScale ) {
             wishspeed = a.pm_ps.speed * waterScale;
         }
