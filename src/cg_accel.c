@@ -1,3 +1,12 @@
+/*
+ * Author: Palme
+ * Licence: GPLv3
+ *
+ * Code heavily use cgame_proxymode and Quake III Arena code,
+ * additional licence rules may apply.
+ */
+
+
 #include <stdlib.h>
 
 #include "cg_accel.h"
