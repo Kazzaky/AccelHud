@@ -169,8 +169,8 @@ jobs:
         -G Ninja
         -DBINARY_NAME=cgamex86_64
         -DCMAKE_BUILD_TYPE=${{ matrix.config }}
-        -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS} -m64"
-        -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -m64"
+        -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS} -fuse-ld=lld -m64"
+        -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -fuse-ld=lld -m64"
         -DCMAKE_C_COMPILER=${{ steps.compiler.outputs.c_compiler }}
         -DCMAKE_CXX_COMPILER=${{ steps.compiler.outputs.cxx_compiler }}
 
