@@ -171,7 +171,7 @@ jobs:
         -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -m64"
         -DCMAKE_C_COMPILER=${{ steps.compiler.outputs.c_compiler }}
         -DCMAKE_CXX_COMPILER=${{ steps.compiler.outputs.cxx_compiler }}
-        -DOBJCOPY_CMD=${{ steps.compiler.outputs.cxx_compiler }}
+        -DOBJCOPY_CMD=${{ steps.compiler.outputs.objcopy }}
 
     - name: Build
       run: cmake --build build
