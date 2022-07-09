@@ -1,5 +1,7 @@
 # AccelHud extension to Proxymod
 
+[![build](https://github.com/Kazzaky/AccelHud/actions/workflows/build_all.yml/badge.svg)](https://github.com/Kazzaky/AccelHud/actions/workflows/build_all.yml)
+
 ![demo of accel hud](./demo-small.gif)
 
 Please note that the AccelHud is currently only pre-alpha version, might be buggy.
