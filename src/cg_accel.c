@@ -13,175 +13,195 @@
 
 #include "bg_pmove.h"
 #include "cg_cvar.h"
-#include "cg_draw.h"
 #include "cg_local.h"
 #include "cg_utils.h"
-#include "help.h"
-#include "q_assert.h"
-#include "q_math.h"
-#include "q_shared.h"
-#include "tr_types.h"
 
 #include "cg_syscall.h"
 
 #include "common.h"
 
-#define ACCEL_DEBUG 1
+#define ACCEL_DEBUG 0
+
+#define ColorAdd(a, b, c)      ((c)[0] = (a)[0] + (b)[0], (c)[1] = (a)[1] + (b)[1], (c)[2] = (a)[2] + (b)[2], (c)[3] = (a)[3] + (b)[3])
 
 static vmCvar_t accel;
 static vmCvar_t accel_trueness;
 static vmCvar_t accel_min_speed;
 static vmCvar_t accel_yh;
+
 static vmCvar_t accel_rgba;
 static vmCvar_t accel_neg_rgba;
 static vmCvar_t accel_hl_rgba;
 static vmCvar_t accel_hl_neg_rgba;
-//static vmCvar_t accel_gap_rgba;
-//static vmCvar_t accel_zeroline_rgba;
 static vmCvar_t accel_point_rgba;
-//static vmCvar_t accel_line_height;
-//static vmCvar_t accel_fillgap;
-//static vmCvar_t accel_drawzeroline;
-static vmCvar_t accel_middle_gap;
+
+static vmCvar_t accel_line_rgba;
+static vmCvar_t accel_line_neg_rgba;
+static vmCvar_t accel_line_hl_rgba;
+static vmCvar_t accel_line_hl_neg_rgba;
+
+static vmCvar_t accel_vline_rgba;
+static vmCvar_t accel_zero_rgba;
+
+static vmCvar_t accel_predict_add_rgba;
+
+static vmCvar_t accel_line_size;
+static vmCvar_t accel_vline_size;
+
+static vmCvar_t accel_ad;
+static vmCvar_t accel_forward;
+static vmCvar_t accel_nokeys;
+
+static vmCvar_t accel_mode_neg;
+
+static vmCvar_t accel_vline;
+
+static vmCvar_t accel_zero_size;
+
 #if ACCEL_DEBUG
   static vmCvar_t accel_verbose;
 #endif // ACCEL_DEBUG
 
 
 static cvarTable_t accel_cvars[] = {
-  { &accel, "p_accel", "0b111", CVAR_ARCHIVE_ND },
-  { &accel_trueness, "p_accel_trueness", "0b110", CVAR_ARCHIVE_ND },
+  { &accel, "p_accel", "0b00000000", CVAR_ARCHIVE_ND },
+
+//#define ACCEL_DISABLED            0
+#define ACCEL_ENABLE              1 // the basic view
+#define ACCEL_HL_ACTIVE           2 // highlight active
+#define ACCEL_LINE_ACTIVE         4 // border line active
+#define ACCEL_BAR_AREA            8 // highlight active
+#define ACCEL_VL_ACTIVE           16 // vertical line active
+#define ACCEL_PL_ACTIVE           32 // point line active
+#define ACCEL_ZB_ACTIVE           64 // zero bar active
+#define ACCEL_STATIC_VALUE        128 // values are constant
+
+
+  { &accel_trueness, "p_accel_trueness", "0b0010", CVAR_ARCHIVE_ND },
+
+#define ACCEL_TN_JUMPCROUCH      1
+#define ACCEL_TN_CPM             2
+#define ACCEL_TN_GROUND          4
+#define ACCEL_TN_STATIC_BOOST    8 
+// 1000 ups -> delta ~1.5f, 3000 ups -> delta ~ 1.0f, 5000 ups -> delta ~ 0.5f
+
   { &accel_min_speed, "p_accel_min_speed", "0", CVAR_ARCHIVE_ND },
   { &accel_yh, "p_accel_yh", "180 30", CVAR_ARCHIVE_ND },
+
   { &accel_rgba, "p_accel_rgba", ".2 .9 .2 .6", CVAR_ARCHIVE_ND },
   { &accel_neg_rgba, "p_accel_neg_rgba", ".9 .2 .2 .6", CVAR_ARCHIVE_ND },
-  { &accel_hl_rgba, "p_accel_hl_rgba", ".3 1.0 .3 .9", CVAR_ARCHIVE_ND },
+  { &accel_hl_rgba, "p_accel_hl_rgba", ".3 1 .3 .9", CVAR_ARCHIVE_ND },
   { &accel_hl_neg_rgba, "p_accel_hl_neg_rgba", ".9 .3 .3 .9", CVAR_ARCHIVE_ND },
-  //{ &accel_gap_rgba, "p_accel_gap_rgba", ".1 .9 .1 .7", CVAR_ARCHIVE_ND },
-  //{ &accel_zeroline_rgba, "p_accel_zeroline_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
   { &accel_point_rgba, "p_accel_point_rgba", ".9 .1 .9 .9", CVAR_ARCHIVE_ND },
-  //{ &accel_line_height, "p_accel_line_height", "5", CVAR_ARCHIVE_ND },
-  //{ &accel_fillgap, "p_accel_fillgap", "1", CVAR_ARCHIVE_ND },
-  //{ &accel_drawzeroline, "p_accel_drawzeroline", "1", CVAR_ARCHIVE_ND },
-  { &accel_middle_gap, "p_accel_middle_gap", "4", CVAR_ARCHIVE_ND },
+  { &accel_line_rgba, "p_accel_line_rgba", ".5 .9 .5 .8", CVAR_ARCHIVE_ND },
+  { &accel_line_neg_rgba, "p_accel_line_neg_rgba", ".9 .5 .5 .8", CVAR_ARCHIVE_ND },
+  { &accel_line_hl_rgba, "p_accel_line_hl_rgba", ".6 1 .6 .9", CVAR_ARCHIVE_ND },
+  { &accel_line_hl_neg_rgba, "p_accel_line_hl_neg_rgba", "1 .6 .6 .9", CVAR_ARCHIVE_ND },
+  { &accel_vline_rgba, "p_accel_vline_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
+  { &accel_zero_rgba, "p_accel_zero_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
+  { &accel_predict_add_rgba, "p_accel_predict_add_rgba", "-.2 -.1 -.2 -.2", CVAR_ARCHIVE_ND },
+  
+  { &accel_line_size, "p_accel_line_size", "5", CVAR_ARCHIVE_ND },
+  { &accel_vline_size, "p_accel_vline_size", "1", CVAR_ARCHIVE_ND },
+  { &accel_zero_size, "p_accel_zero_size", "5", CVAR_ARCHIVE_ND },
+
+  { &accel_ad, "p_accel_ad", "3", CVAR_ARCHIVE_ND },
+
+//#define ACCEL_AD_DISABLED       0
+#define ACCEL_AD_NORMAL         1
+#define ACCEL_AD_PREDICT        2
+#define ACCEL_AD_PREDICT_BOTH   3
+
+  { &accel_forward, "p_accel_forward", "2", CVAR_ARCHIVE_ND },
+
+//#define ACCEL_FORWARD_DISABLED      0
+#define ACCEL_FORWARD_NORMAL        1
+#define ACCEL_FORWARD_PREDICT       2
+
+  { &accel_nokeys, "p_accel_nokeys", "2", CVAR_ARCHIVE_ND },
+
+//#define ACCEL_NOKEYS_DISABLED      0
+#define ACCEL_NOKEYS_NORMAL        1
+#define ACCEL_NOKEYS_PREDICT       2
+
+  { &accel_mode_neg, "p_accel_neg_mode", "2", CVAR_ARCHIVE_ND },
+
+//#define ACCEL_NEG_MODE          0 // negative disabled
+#define ACCEL_NEG_MODE_ENABLED    1 // negative enabled
+#define ACCEL_NEG_MODE_ADJECENT   2 // only adjecent negative are shown
+#define ACCEL_NEG_MODE_ZERO_ONLY  3 // calculated but only at zero bar shown
+
+  { &accel_vline, "p_accel_vline", "0b10", CVAR_ARCHIVE_ND },
+
+#define ACCEL_VL_USER_COLOR   1 // line have user defined color, if this is not set the colors are pos/neg
+#define ACCEL_VL_LINE_H       2 // include bar height
+
   #if ACCEL_DEBUG
     { &accel_verbose, "p_accel_verbose", "0", CVAR_ARCHIVE_ND },
   #endif // ACCEL_DEBUG
 };
 
-enum {RGBA_I, RGBA_I_NEG, RGBA_I_HL, RGBA_I_NEG_HL, RGBA_I_POINT};
+enum {
+  RGBA_I_POS,
+  RGBA_I_NEG,
+  RGBA_I_HL_POS,
+  RGBA_I_HL_NEG,
+  RGBA_I_POINT,
+  RGBA_I_BORDER,
+  RGBA_I_BORDER_NEG,
+  RGBA_I_BORDER_HL_POS,
+  RGBA_I_BORDER_HL_NEG,
+  RGBA_I_VLINE,
+  RGBA_I_ZERO,
+  RGBA_I_PREDICT,
+  RGBA_I_LENGTH
+};
 
-#define ACCEL_NORMAL    1
-#define ACCEL_HL_ACTIVE 2
-#define ACCEL_POINT 4
-
-#define ACCEL_JUMPCROUCH 1
-#define ACCEL_CPM        2
-#define ACCEL_GROUND     4
-/*static help_t accel_help[] = {
-  {
-    accel_cvars + 0,
-    BINARY_LITERAL,
-    {
-      "p_accel 0bXXX",
-      "          |||",
-      "          ||+- draw basic hud",
-      "          |+-- highlight active zone",
-      "          +--- show point of current accel",
-    },
-  },
-  {
-    accel_cvars + 1,
-    BINARY_LITERAL,
-    {
-      "p_accel_trueness 0bXXX",
-      "                   |||",
-      "                   ||+- show true jump/crouch zones",
-      "                   |+-- show true CPM air control zones",
-      "                   +--- show true ground control zones",
-    },
-  },
-  {
-    accel_cvars + 3,
-    Y | H,
-    {
-      "p_accel_yh X X",
-      "           | |",
-      "           | +- y coord of hud center",
-      "           +--- height of hud"
-    },
-  },
-  {
-    accel_cvars + 4,
-    RGBA,
-    {
-      "p_accel_rgba X X X X",
-    },
-  },
-  {
-    accel_cvars + 5,
-    RGBA,
-    {
-      "p_accel_neg_rgba X X X X",
-    },
-  },
-  {
-    accel_cvars + 6,
-    RGBA,
-    {
-      "p_accel_hl_rgba X X X X",
-    },
-  },
-  {
-    accel_cvars + 7,
-    RGBA,
-    {
-      "p_accel_hl_neg_rgba X X X X",
-    },
-  },
-  {
-    accel_cvars + 8,
-    RGBA,
-    {
-      "p_accel_gap_rgba X X X X",
-    },
-  },
-  // {
-  //   accel_cvars + 9,
-  //   RGBA,
-  //   {
-  //     "p_accel_zeroline_rgba X X X X",
-  //   },
-  // },
-  {
-    accel_cvars + 9,
-    RGBA,
-    {
-      "p_accel_point_rgba X X X X",
-    },
-  },
-};*/
+// no help here, just because there is no space in the proxymod help table and i don't want to modify it (for now)
 
 typedef struct {
-  float x, y, width,value;
+  int   order; // control variable for adjecent checking
+  float x; // scaled x 
+  float y; // scaled y
+  float width; // scaled width
+  float value; // raw delta speed
+  int   polarity; // 1 = positive, 0 = zero, -1 = negative
 } graph_bar;
 
 #define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded
-static graph_bar accel_graph[GRAPH_MAX_RESOLUTION]; 
+
+static graph_bar accel_graph[GRAPH_MAX_RESOLUTION*3]; // regular + prediction left + prediction right, i know its insane but for the sake to not overflow 
 static int accel_graph_size;
+
+static int resolution;
+static int center;
+static float x_angle_ratio;
+static float ypos_scaled;
+static float hud_height_scaled;
+static float zero_gap_scaled;
+static float line_size_scaled;
+static float vline_size_scaled;
+
+static vec4_t color_tmp;
+
+static int predict;
+static int order;
+
+static int velocity_unchanged;
 
 typedef struct
 {
-  vec2_t graph_yh;
+  vec2_t        graph_yh;
 
-  vec4_t graph_rgba[5]; 
+  vec4_t        graph_rgba[RGBA_I_LENGTH]; 
 
   pmove_t       pm;
   playerState_t pm_ps;
-  pml_t pml;
+  pml_t         pml;
 } accel_t;
 
 static accel_t a;
+
 
 void init_accel(void)
 {
@@ -192,8 +212,7 @@ void init_accel(void)
 void update_accel(void)
 {
   update_cvars(accel_cvars, ARRAY_LEN(accel_cvars));
-  accel.integer          = cvar_getInteger("p_accel");
-  accel_trueness.integer = cvar_getInteger("p_accel_trueness");
+  accel.integer           = cvar_getInteger("p_accel"); // this is only relevant to be updated before draw
 }
 
 static void PmoveSingle(void);
@@ -204,12 +223,18 @@ void draw_accel(void)
 {
   if (!accel.integer) return;
 
+  // update cvars
+  accel_trueness.integer  = cvar_getInteger("p_accel_trueness");
+  accel_vline.integer     = cvar_getInteger("p_accel_vline");
+
   a.pm_ps = *getPs();
 
-  if (VectorLength2(a.pm_ps.velocity) >= accel_min_speed.value) PmoveSingle();
-}
+  if (VectorLength2(a.pm_ps.velocity) >= accel_min_speed.value) {
+    PmoveSingle();
+  }
 
-static int velocity_unchanged;
+  // TODO: put drawing here
+}
 
 static void PmoveSingle(void)
 {
@@ -227,6 +252,13 @@ static void PmoveSingle(void)
                                   (a.pm_ps.stats[13] & PSF_USERINPUT_LEFT) / PSF_USERINPUT_LEFT);
     a.pm.cmd.upmove      = scale * ((a.pm_ps.stats[13] & PSF_USERINPUT_JUMP) / PSF_USERINPUT_JUMP -
                                (a.pm_ps.stats[13] & PSF_USERINPUT_CROUCH) / PSF_USERINPUT_CROUCH);
+  }
+
+  if((accel_nokeys.value == 0 && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
+    || (accel_ad.value == 0 && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
+    || (accel_forward.value == 0 && a.pm.cmd.forwardmove && !a.pm.cmd.rightmove))
+  {
+    return;
   }
 
   // clear all pmove local vars
@@ -252,8 +284,30 @@ static void PmoveSingle(void)
     a.pm.cmd.upmove      = 0;
   }
 
+  predict = 0;
+  order = 0; // intentionally here in case we predict both sides to prevent the rare case of adjecent false positive
+
+  // predictions (simulate strafe)
+  if((accel_ad.value == ACCEL_AD_PREDICT || accel_ad.value == ACCEL_AD_PREDICT_BOTH) && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove){
+    a.pm.cmd.forwardmove = scale;
+    a.pm.cmd.rightmove   = scale;
+    predict = 1;
+  }
+
+  if(accel_forward.value == ACCEL_FORWARD_PREDICT && a.pm.cmd.forwardmove && !a.pm.cmd.rightmove){
+    a.pm.cmd.forwardmove = scale;
+    a.pm.cmd.rightmove   = scale;
+    predict = 2;
+  }
+
+  if(accel_nokeys.value == ACCEL_NOKEYS_PREDICT && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove){
+    a.pm.cmd.forwardmove = scale;
+    a.pm.cmd.rightmove   = scale;
+    predict = 3;
+  }
+
   // Use default key combination when no user input
-  if (!a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
+  if (accel_nokeys.value == ACCEL_NOKEYS_NORMAL && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
   {
     a.pm.cmd.forwardmove = scale;
     a.pm.cmd.rightmove   = scale;
@@ -268,42 +322,128 @@ static void PmoveSingle(void)
   // set groundentity
   PM_GroundTrace(&a.pm, &a.pm_ps, &a.pml);
 
-  if (a.pm_ps.powerups[PW_FLIGHT])
+  // if (a.pm_ps.powerups[PW_FLIGHT])
+  // {
+  //   // // flight powerup doesn't allow jump and has different friction
+  //   // PM_FlyMove();
+  //   return;
+  // }
+  // else if (a.pm_ps.pm_flags & PMF_GRAPPLE_PULL)
+  // {
+  //   // PM_GrappleMove();
+  //   // // We can wiggle a bit
+  //   // PM_AirMove();
+  //   return;
+  // }
+  // else if (a.pm_ps.pm_flags & PMF_TIME_WATERJUMP)
+  // {
+  //   // PM_WaterJumpMove();
+  //   return;
+  // }
+  // else if (a.pm.waterlevel > 1)
+  // {
+  //   // // swimming
+  //   // PM_WaterMove();
+  //   return;
+  // }
+
+
+  if(a.pm_ps.powerups[PW_FLIGHT] || a.pm_ps.pm_flags & PMF_GRAPPLE_PULL
+      || a.pm_ps.pm_flags & PMF_TIME_WATERJUMP || a.pm.waterlevel > 1)
   {
-    // // flight powerup doesn't allow jump and has different friction
-    // PM_FlyMove();
     return;
   }
-  else if (a.pm_ps.pm_flags & PMF_GRAPPLE_PULL)
-  {
-    // PM_GrappleMove();
-    // // We can wiggle a bit
-    // PM_AirMove();
-    return;
-  }
-  else if (a.pm_ps.pm_flags & PMF_TIME_WATERJUMP)
-  {
-    // PM_WaterJumpMove();
-    return;
-  }
-  else if (a.pm.waterlevel > 1)
-  {
-    // // swimming
-    // PM_WaterMove();
-    return;
-  }
-  else if (a.pml.walking)
-  {
-    // walking on ground
-    PM_WalkMove();
-  }
-  else
-  {
-    // airborne
-    PM_AirMove();
+  else {
+    // we are gonna draw
+
+    // update static variables
+    ParseVec(accel_yh.string, a.graph_yh, 2);
+
+    resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
+    center = resolution / 2;
+    x_angle_ratio = cg.refdef.fov_x / resolution;
+    ypos_scaled = a.graph_yh[0] * cgs.screenXScale;
+    hud_height_scaled = a.graph_yh[1] * cgs.screenXScale;
+    zero_gap_scaled = accel_zero_size.value  * cgs.screenXScale;
+    line_size_scaled = accel_line_size.value * cgs.screenXScale;
+    vline_size_scaled = accel_vline_size.value * cgs.screenXScale;
+
+    if (a.pml.walking)
+    {
+      // walking on ground
+      PM_WalkMove();
+    }
+    else
+    {
+      // airborne
+      PM_AirMove();
+    }
+
+    // simulate strafe on other side
+    if((predict == 1 && accel_ad.integer & ACCEL_AD_PREDICT_BOTH) || predict == 2 || predict == 3){
+      a.pm.cmd.rightmove *= -1;
+      if (a.pml.walking)
+      {
+        // walking on ground
+        PM_WalkMove();
+      }
+      else
+      {
+        // airborne
+        PM_AirMove();
+      }
+    }
   }
 }
 
+// does not set color
+inline static void draw_positive(float x, float y, float w, float h)
+{
+  trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+}
+
+// does not set color
+inline static void draw_negative(float x, float y, float w, float h)
+{
+  trap_R_DrawStretchPic(x, (y - h) + zero_gap_scaled / 2, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+}
+
+//static void (*draw_polar)(const graph_bar * const, int, float, float);
+inline static void _draw_vline(const graph_bar * const bar, int side, float y_offset, float vline_height)
+{
+  if(bar->polarity > 0)
+  {
+    if(predict){
+      ColorAdd(a.graph_rgba[accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_POS], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+      trap_R_SetColor(color_tmp);
+    }
+    else {
+      trap_R_SetColor(a.graph_rgba[accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_POS]);
+    }
+    draw_positive(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + bar->polarity * y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
+  }
+  else {
+    if(predict){
+      ColorAdd(a.graph_rgba[accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_NEG], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+      trap_R_SetColor(color_tmp);
+    }
+    else {
+      trap_R_SetColor(a.graph_rgba[accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_NEG]);
+    }
+    draw_negative(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + bar->polarity * y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
+  }
+}
+
+inline static void vline_to(const graph_bar * const bar, int side, float dist_to_zero)
+{
+  if(accel_vline.integer & ACCEL_VL_LINE_H)
+  {
+    _draw_vline(bar, side, 0, dist_to_zero);
+  }
+  else if(dist_to_zero > line_size_scaled) {
+    _draw_vline(bar, side, line_size_scaled, dist_to_zero - line_size_scaled);
+  }
+}
 
 static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, /*vec3_t accel_out,*/ int verbose){
   int			i;
@@ -403,42 +543,40 @@ Handles user intended acceleration
 */
 static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_)
 {
-  int i, resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
-  float speed_delta, cur_speed_delta = 0, angle_yaw_relative, normalizer,
+  int i, j;
+  float y, dist_to_zero, dist_to_adj, height, line_height, speed_delta, cur_speed_delta = 0, angle_yaw_relative, normalizer,
     resolution_ratio = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ?
       cgs.glconfig.vidWidth / (float)GRAPH_MAX_RESOLUTION :
       1.f;
-  vec3_t wishdir_rotated;
-  graph_bar *bar;
-  const int center = resolution / 2;
-  const float x_angle_ratio = cg.refdef.fov_x / resolution,
-              ypos_scaled = a.graph_yh[0] * cgs.screenXScale,
-              hud_height_scaled = a.graph_yh[1] * cgs.screenXScale;
-              //line_height_scaled = accel_line_height.value * cgs.screenXScale;
 
-  //static graph_bar accel_graph[cgs.glconfig.vidWidth];
+  int i_color;
+  vec3_t wishdir_rotated;
+  graph_bar *bar, *bar_adj;
 
   // update current cvar values
   ParseVec(accel_yh.string, a.graph_yh, 2);
-  for (i = 0; i < 5; ++i) ParseVec(accel_cvars[4 + i].vmCvar->string, a.graph_rgba[i], 4);
+  for (i = 0; i < RGBA_I_LENGTH; ++i) ParseVec(accel_cvars[4 + i].vmCvar->string, a.graph_rgba[i], 4);
 
-  // if(accel_drawzeroline.value){
-  //   trap_R_SetColor(a.graph_rgba[5]);
-  //   trap_R_DrawStretchPic(0, ypos_scaled, cgs.glconfig.vidWidth, 2, 0, 0, 0, 0, cgs.media.whiteShader);
+  // if(accel.integer & ACCEL_ZEROLINE){
+  //   trap_R_SetColor(a.graph_rgba[RGBA_I_ZEROLINE]);
+  //   trap_R_DrawStretchPic(0, ypos_scaled, cgs.glconfig.vidWidth, 1 * cgs.screenXScale, 0, 0, 0, 0, cgs.media.whiteShader);
   // }
 
   // theoretical maximum is: addspeed * sin(45) * 2, but in practice its way less
   // hardcoded for now
-  normalizer = 2.56f * 1.41421356237f;
+  // inacurate approximation
+  normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -1*0.00025f*VectorLength2(a.pm_ps.velocity)+1.75f);
   if(a.pml.walking){
-    normalizer = 38.4f * 1.41421356237f;
+    normalizer *= 15.f;// 38.4f * 1.41421356237f;
   }
-  else if (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove){
-    normalizer = 30.f * 1.41421356237f;
+  else if (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove && accel_trueness.integer & ACCEL_TN_CPM){
+    normalizer *= 11.72f; // 30.f * 1.41421356237f;
   }
 
   if(!velocity_unchanged){
+    // recalculate the graph
     accel_graph_size = 0;
+    // cur_speed_delta = 1000.f; // just reset to nonsence value // not needed it imo
     // for each horizontal pixel
     for(i = 0; i < resolution; ++i)
     {
@@ -447,74 +585,266 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         cur_speed_delta = speed_delta = calc_accelspeed(wishdir, wishspeed, accel_, 1);
       }
       else{
+        // rotating wishdir vector along whole x axis
         angle_yaw_relative = (i - (resolution / 2.f)) * x_angle_ratio;
         VectorCopy(wishdir, wishdir_rotated);
         rotatePointByAngle(wishdir_rotated, angle_yaw_relative);
         speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, accel_, 0);
       }
 
-      if(accel_graph_size && accel_graph[accel_graph_size-1].value == speed_delta){
+      // automatically omit negative accel when plotting predictions, also when negatives are disabled ofc
+      if((predict || accel_mode_neg.value == 0) && speed_delta <= 0){
+        order++; // just control variable to distinct between adjecent bars (checking with x vs x+width is not possible due to float precision false negative)
+        continue;
+      }
+
+      if(accel_graph_size && accel_graph[accel_graph_size-1].value == speed_delta
+          && accel_graph[accel_graph_size-1].order == order - 1) // since we are omitting sometimes this check is mandatory
+      {
         accel_graph[accel_graph_size-1].width += resolution_ratio;
       }
       else{
         bar = &(accel_graph[accel_graph_size++]);
         bar->x = i * resolution_ratio;
-        bar->y = ypos_scaled + hud_height_scaled * (speed_delta / normalizer) * -1;
+        bar->polarity = speed_delta ? (speed_delta > 0 ? 1 : -1) : 0;
+        bar->y = ypos_scaled + hud_height_scaled * (accel.integer & ACCEL_STATIC_VALUE ? bar->polarity : speed_delta / normalizer) * -1;
         bar->width = resolution_ratio;
         bar->value = speed_delta;
+        bar->order = order++;
       }
     }
+
   }
   
-  // each bar in graph
+  // actual drawing si done here, for each bar in graph
   for(i = 0; i < accel_graph_size; ++i)
   {
     bar = &(accel_graph[i]);
-    if(bar->value >= 0){
-      if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
-        trap_R_SetColor(a.graph_rgba[RGBA_I_HL]);
-      }
-      else{
-        trap_R_SetColor(a.graph_rgba[RGBA_I]);
-      }
-      trap_R_DrawStretchPic(bar->x, bar->y, bar->width, ypos_scaled-bar->y, 0, 0, 0, 0, cgs.media.whiteShader);
-    }else{
-      if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
-        trap_R_SetColor(a.graph_rgba[RGBA_I_NEG_HL]);
-      }
-      else{
-        trap_R_SetColor(a.graph_rgba[RGBA_I_NEG]);
-      }
-      trap_R_DrawStretchPic(bar->x, ypos_scaled + accel_middle_gap.value * cgs.screenXScale, bar->width, (bar->y - ypos_scaled) + accel_middle_gap.value  * cgs.screenXScale, 0, 0, 0, 0, cgs.media.whiteShader);
-    }
-    
-    // if(accel_fillgap.value){
-    //   if(i){
-    //     if(accel_graph[i-1].y+line_height_scaled < bar->y){
-    //       trap_R_SetColor(a.graph_rgba[4]);
-    //       trap_R_DrawStretchPic(bar->x - 1, accel_graph[i-1].y+line_height_scaled, 2, bar->y-accel_graph[i-1].y-line_height_scaled, 0, 0, 0, 0, cgs.media.whiteShader);
-    //     }
-    //   }
-    //   if(i < accel_graph_size - 1){
-    //     if(accel_graph[i+1].y+line_height_scaled < bar->y){
-    //       trap_R_SetColor(a.graph_rgba[4]);
-    //       trap_R_DrawStretchPic(bar->x+bar->width - 1, accel_graph[i+1].y+line_height_scaled, 2, bar->y-accel_graph[i+1].y-line_height_scaled, 0, 0, 0, 0, cgs.media.whiteShader);
-    //     }
-    //   }
-    // }
-  }
 
-  if(accel.integer & ACCEL_POINT){
-    trap_R_SetColor(a.graph_rgba[RGBA_I_POINT]);
-    float y = ypos_scaled + hud_height_scaled * (cur_speed_delta / normalizer) * -1;
-    if(cur_speed_delta >= 0){
-      trap_R_DrawStretchPic(center - (1 * cgs.screenXScale) / 2, y, 1 * cgs.screenXScale, ypos_scaled - y, 0, 0, 0, 0, cgs.media.whiteShader);
+    do // dummy loop
+    {
+      // bar's drawing
+      if(bar->polarity > 0){ // positive bar
+        if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
+          if(predict){
+            ColorAdd(a.graph_rgba[RGBA_I_HL_POS], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+            trap_R_SetColor(color_tmp);
+          }
+          else {
+            trap_R_SetColor(a.graph_rgba[RGBA_I_HL_POS]);
+          }
+          i_color = RGBA_I_BORDER_HL_POS;
+        }
+        else{
+          if(predict){
+            ColorAdd(a.graph_rgba[RGBA_I_POS], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+            trap_R_SetColor(color_tmp);
+          }
+          else {
+            trap_R_SetColor(a.graph_rgba[RGBA_I_POS]);
+          }
+          i_color = RGBA_I_BORDER;
+        }
+        
+        height = ypos_scaled-bar->y;
+      
+        if(accel.integer & ACCEL_LINE_ACTIVE)
+        {
+          line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
+          // if border does not cover whole area
+          if(height > line_height && accel.integer & ACCEL_BAR_AREA)
+          {
+            // draw uncovered area
+            // trap_R_DrawStretchPic(bar->x, bar->y + line_height, bar->width,
+            //     height - line_height, 0, 0, 0, 0, cgs.media.whiteShader);
+            draw_positive(bar->x, bar->y + line_height, bar->width, height - line_height);
+          }
+          // draw border line
+          if(predict){
+            ColorAdd(a.graph_rgba[i_color], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+            trap_R_SetColor(color_tmp);
+          }
+          else {
+            trap_R_SetColor(a.graph_rgba[i_color]);
+          }
+          //trap_R_DrawStretchPic(bar->x, bar->y, bar->width, line_height, 0, 0, 0, 0, cgs.media.whiteShader);
+          draw_positive(bar->x, bar->y, bar->width, line_height);
+        }
+        else{
+          //trap_R_DrawStretchPic(bar->x, bar->y, bar->width, height, 0, 0, 0, 0, cgs.media.whiteShader);
+          draw_positive(bar->x, bar->y, bar->width, height);
+        }
+      }
+      else if(bar->polarity < 0){ // negative bar
+        if(accel_mode_neg.value != ACCEL_NEG_MODE_ENABLED && accel_mode_neg.value != ACCEL_NEG_MODE_ADJECENT) continue;
+        if((accel_mode_neg.value == ACCEL_NEG_MODE_ADJECENT)
+            &&
+            // is not positive left adjecent
+            !(
+              i && accel_graph[i-1].order == bar->order - 1 // check if its rly adjecent // accel_graph[i-1].x + accel_graph[i-1].width == bar->x // (float precision can brake this comparation btw !)
+              && accel_graph[i-1].value > 0 // lets not consider 0 as positive in this case
+            )
+            &&
+            // is not positive right adjecent
+            !(
+              i < accel_graph_size - 1 && accel_graph[i+1].order - 1 == bar->order // check if its rly adjecent // accel_graph[i+1].x == bar->x + bar->width // (float precision can brake this comparation btw !)
+              && accel_graph[i+1].value > 0 // lets not consider 0 as positive in this case
+            )
+          )
+        { 
+          continue;
+        }
+
+        if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta)
+        {
+          if(predict){
+            ColorAdd(a.graph_rgba[RGBA_I_HL_NEG], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+            trap_R_SetColor(color_tmp);
+          }
+          else {
+            trap_R_SetColor(a.graph_rgba[RGBA_I_HL_NEG]);
+          }
+          i_color = RGBA_I_BORDER_HL_NEG;
+        }
+        else{
+          if(predict){
+            ColorAdd(a.graph_rgba[RGBA_I_NEG], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+            trap_R_SetColor(color_tmp);
+          }
+          else {
+            trap_R_SetColor(a.graph_rgba[RGBA_I_NEG]);
+          }
+          i_color = RGBA_I_BORDER_NEG;
+        }
+
+        height = (bar->y - ypos_scaled); // height should not be gapped imo need test // + zero_gap_scaled
+        
+        if(accel.integer & ACCEL_LINE_ACTIVE)
+        {
+          line_height = (height > line_size_scaled ? line_size_scaled : height);
+          // if border does not cover whole area
+          if(height > line_height && accel.integer & ACCEL_BAR_AREA)
+          {
+            // draw uncovered area
+            //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled, bar->width, height - line_height, 0, 0, 0, 0, cgs.media.whiteShader);  
+            draw_negative(bar->x, bar->y - line_height, bar->width, height - line_height);
+          }
+          if(predict){
+            ColorAdd(a.graph_rgba[i_color], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+            trap_R_SetColor(color_tmp);
+          }
+          else {
+            trap_R_SetColor(a.graph_rgba[i_color]);
+          }
+          //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled + (height - line_height), bar->width, line_height, 0, 0, 0, 0, cgs.media.whiteShader);
+          draw_negative(bar->x, bar->y, bar->width, line_height);
+        }
+        else{
+          //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled, bar->width, height, 0, 0, 0, 0, cgs.media.whiteShader);
+          draw_negative(bar->x, bar->y, bar->width, height);
+        }
+      } // zero bars are separated
+    } while(0);
+
+    // vertical line's drawing
+    if(bar->value && accel.integer & ACCEL_VL_ACTIVE)
+    {
+      int skip_no_adjecent;
+      // for each side
+      for(j = -1; j <= 1; j+= 2)
+      {
+        skip_no_adjecent = 0;
+        // check for adjecent bar
+        if(((j < 0 && !i) || (j > 0 && i >= accel_graph_size - 1))
+            || accel_graph[i+j].order != bar->order+j) skip_no_adjecent = 1; 
+
+        dist_to_zero = fabs(bar->y - ypos_scaled);
+
+        // current bar do not have an adjecent
+        if(skip_no_adjecent)
+        {
+          // by default be allow drawing vlines for no adjecent
+          vline_to(bar, j, dist_to_zero);
+          continue;
+        }
+
+        // the case when there is an adjecent bar
+        bar_adj = &accel_graph[i+j];
+
+        // check if the adjecents have same polarity
+        if(bar->polarity == bar_adj->polarity)
+        {
+          // adjecent bar have same polarity
+          // only case we need to calculate with the adjecent
+
+          // skip vline for lower bar
+          if((bar->polarity == 1 && bar->value < bar_adj->value)
+              || (bar->polarity == -1 && bar->value > bar_adj->value)) continue;
+
+          dist_to_adj = fabs(bar_adj->y - bar->y);
+
+          vline_to(bar, j, dist_to_adj + (accel_vline.integer & ACCEL_VL_LINE_H ? fmin(dist_to_zero - dist_to_adj, line_size_scaled) : 0));
+        }
+        else {
+          // otherwise we can handle these regulary
+          vline_to(bar, j, dist_to_zero);
+        }
+      }
     }
-    else{
-      trap_R_DrawStretchPic(center - (1 * cgs.screenXScale) / 2, ypos_scaled + accel_middle_gap.value * cgs.screenXScale, 1 * cgs.screenXScale, (y - ypos_scaled) + accel_middle_gap.value  * cgs.screenXScale, 0, 0, 0, 0, cgs.media.whiteShader);
+  } // /vlines
+
+  // zero bars
+  if(accel.integer & ACCEL_ZB_ACTIVE && !predict){
+    for(i = 0; i < accel_graph_size; ++i)
+    {
+      bar = &(accel_graph[i]);
+      if(bar->polarity > 0){
+        if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
+          i_color = RGBA_I_HL_POS;
+        }else {
+          i_color = RGBA_I_POS;
+        }
+      }
+      else if(bar->polarity < 0){
+        if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
+          i_color = RGBA_I_HL_NEG;
+        }
+        else {
+          i_color = RGBA_I_NEG;
+        }
+      }
+      else {
+        i_color = RGBA_I_ZERO;
+      }
+
+      trap_R_SetColor(a.graph_rgba[i_color]);
+
+      draw_positive(bar->x, ypos_scaled, bar->width, zero_gap_scaled);
+    }
+  }
+  // /zero bars
+
+  // point line
+  if(accel.integer & ACCEL_PL_ACTIVE)
+  {
+    if(predict){
+      ColorAdd(a.graph_rgba[RGBA_I_POINT], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
+      trap_R_SetColor(color_tmp);
+    }
+    else {
+      trap_R_SetColor(a.graph_rgba[RGBA_I_POINT]);
+    }
+    y = ypos_scaled + hud_height_scaled * (cur_speed_delta / normalizer) * -1;
+    if(cur_speed_delta > 0){
+      //trap_R_DrawStretchPic(center - (1 * cgs.screenXScale) / 2, y, 1 * cgs.screenXScale, ypos_scaled - y, 0, 0, 0, 0, cgs.media.whiteShader);
+      draw_positive(center - (1 * cgs.screenXScale) / 2, y, 1 * cgs.screenXScale, ypos_scaled - y);
+    }
+    else if(cur_speed_delta < 0){
+      //trap_R_DrawStretchPic(center - (1 * cgs.screenXScale) / 2, ypos_scaled + accel_zero_size.value * cgs.screenXScale, 1 * cgs.screenXScale, (y - ypos_scaled) + accel_zero_size.value  * cgs.screenXScale, 0, 0, 0, 0, cgs.media.whiteShader);
+      draw_negative(center - (1 * cgs.screenXScale) / 2, y, 1 * cgs.screenXScale, y - ypos_scaled);
     }
     //trap_R_DrawStretchPic(center - (1 * cgs.screenXScale) / 2, ypos_scaled + hud_height_scaled * (cur_speed_delta / normalizer) * -1, 1 * cgs.screenXScale, line_height_scaled, 0, 0, 0, 0, cgs.media.whiteShader);
-  }
+  } // /point line
 
   trap_R_SetColor(NULL);
 }
@@ -565,7 +895,7 @@ static void PM_AirMove( void ) {
   float		scale;
 
 
-  scale = accel_trueness.integer & ACCEL_JUMPCROUCH ?
+  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
     PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
 
@@ -585,7 +915,7 @@ static void PM_AirMove( void ) {
   wishspeed *= scale;
 
   // not on ground, so little effect on velocity
-  if ((a.pm_ps.pm_flags & PMF_PROMODE) && (accel_trueness.integer & ACCEL_CPM) && (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove))
+  if ((a.pm_ps.pm_flags & PMF_PROMODE) && (accel_trueness.integer & ACCEL_TN_CPM) && (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove))
   {
     PM_Accelerate(wishdir, wishspeed > cpm_airwishspeed ? cpm_airwishspeed : wishspeed, cpm_airstrafeaccelerate);
   }
@@ -626,7 +956,7 @@ static void PM_WalkMove( void ) {
         return;
     }
 
-    scale = accel_trueness.integer & ACCEL_JUMPCROUCH ?
+    scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
     PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
 
@@ -671,7 +1001,7 @@ static void PM_WalkMove( void ) {
 
   //when a player gets hit, they temporarily lose
   // full control, which allows them to be moved a bit
-  if (accel_trueness.integer & ACCEL_GROUND)
+  if (accel_trueness.integer & ACCEL_TN_GROUND)
   {
     if (a.pml.groundTrace.surfaceFlags & SURF_SLICK || a.pm_ps.pm_flags & PMF_TIME_KNOCKBACK)
     {

@@ -1,3 +1,5 @@
+// Copyright (C) 1999-2000 Id Software, Inc.
+
 #include <math.h>
 
 #include "common.h"

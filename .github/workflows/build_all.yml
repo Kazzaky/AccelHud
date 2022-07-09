@@ -1,4 +1,4 @@
-name: build_all
+name: build
 
 on: workflow_dispatch
 
@@ -9,8 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        c: [gcc, clang]
-        config: [Debug, Release]
+        config: [Release]
         arch: [32, 64]
         include:
           - arch: 32
@@ -21,8 +20,6 @@ jobs:
             name: cgamex86_64
             msystem: MINGW64
             prefix: mingw-w64-x86_64
-          - c: gcc
-            cxx: g++
           - c: clang
             cxx: clang++
 
@@ -74,64 +71,19 @@ jobs:
         if-no-files-found: error
         retention-days: 5
 
-  windows_msvc:
-    name: ${{ matrix.config }} Windows ${{ matrix.arch }}-bit (MSVC)
-    runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        config: [Debug, Release]
-        arch: [32, 64]
-        include:
-          - arch: 32
-            name: cgamex86
-            A: Win32
-          - arch: 64
-            name: cgamex86_64
-            A: x64
-
-    steps:
-    - uses: actions/checkout@v3
-      with:
-        submodules: recursive
-
-    - name: Configure
-      run: cmake
-        -S .
-        -B build
-        -G "Visual Studio 17 2022"
-        -A ${{ matrix.A }}
-        -DBINARY_NAME=${{ matrix.name }}
-        -DCMAKE_C_FLAGS_DEBUG="${CMAKE_C_FLAGS_DEBUG} /MTd"
-        -DCMAKE_CXX_FLAGS_DEBUG="${CMAKE_CXX_FLAGS_DEBUG} /MTd"
-        -DCMAKE_C_FLAGS_RELEASE="${CMAKE_C_FLAGS_RELEASE} /MT"
-        -DCMAKE_CXX_FLAGS_RELEASE="${CMAKE_CXX_FLAGS_RELEASE} /MT"
-        -DCMAKE_C_COMPILER=cl
-        -DCMAKE_CXX_COMPILER=cl
-
-    - name: Build
-      run: cmake --build build --config ${{ matrix.config }}
-
-    - name: Test
-      working-directory: build/cgame_proxymod
-      run: ctest --build-config ${{ matrix.config }} --no-tests=error --output-on-failure
-
   ubuntu:
     name: ${{ matrix.config }} Ubuntu ${{ matrix.arch }}-bit (${{ matrix.c }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        c: [gcc, clang]
-        config: [Debug, Release]
+        config: [Release]
         arch: [32, 64]
         include:
           - arch: 32
             name: cgamei386
           - arch: 64
             name: cgamex86_64
-          - c: gcc
-            cxx: g++
           - c: clang
             cxx: clang++
 
@@ -184,11 +136,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        c: [gcc, clang]
-        config: [Debug, Release]
+        config: [Release]
         include:
-          - c: gcc
-            cxx: g++
           - c: clang
             cxx: clang++
 
