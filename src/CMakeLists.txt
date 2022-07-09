@@ -6,7 +6,7 @@ target_include_directories(cgame_obj PRIVATE ../cgame_proxymod/src)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     add_custom_command(OUTPUT
         ${CMAKE_BINARY_DIR}/cg_hud.c.o
-        COMMAND objcopy --redefine-sym init_hud=__real_init_hud --redefine-sym update_hud=__real_update_hud --redefine-sym draw_hud=__real_draw_hud cg_hud.c.o
+        COMMAND objcpy --redefine-sym init_hud=__real_init_hud --redefine-sym update_hud=__real_update_hud --redefine-sym draw_hud=__real_draw_hud ../cgame_proxymod/src/CMakeFiles/cgame_obj.dir/cg_hud.c.o
         DEPENDS cgame_obj
         VERBATIM
     )
