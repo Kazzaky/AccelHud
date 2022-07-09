@@ -60,11 +60,11 @@ jobs:
       run: ctest --no-tests=error --output-on-failure
 
     - name: Install
-      if: matrix.c == 'gcc' && matrix.config == 'Release'
+      if: matrix.c == 'clang' && matrix.config == 'Release'
       run: cmake --install build --prefix bin --strip
 
     - uses: actions/upload-artifact@v3
-      if: matrix.c == 'gcc' && matrix.config == 'Release'
+      if: matrix.c == 'clang' && matrix.config == 'Release'
       with:
         name: artifact
         path: bin/*.dll
@@ -119,11 +119,11 @@ jobs:
       run: ctest --no-tests=error --output-on-failure
 
     - name: Install
-      if: matrix.c == 'gcc' && matrix.config == 'Release'
+      if: matrix.c == 'clang' && matrix.config == 'Release'
       run: cmake --install build --prefix bin --strip
 
     - uses: actions/upload-artifact@v3
-      if: matrix.c == 'gcc' && matrix.config == 'Release'
+      if: matrix.c == 'clang' && matrix.config == 'Release'
       with:
         name: artifact
         path: bin/*.so
