@@ -14,11 +14,12 @@ jobs:
         include:
           - c: clang
             cxx: clang++
-            ld: lld
 
     steps:
     - name: Install tools
-      run: brew install ninja
+      run: |
+        brew install ninja
+        brew install crosstool-ng
 
     - name: Update compiler
       id: compiler
@@ -27,7 +28,6 @@ jobs:
         # clang 13.0.0 hangs while building cg_vm.c (related to branching macro UOP()) => use clang 13.0.1
         echo "::set-output name=c_compiler::$(brew --prefix llvm@13)/bin/${{ matrix.c }}"
         echo "::set-output name=cxx_compiler::$(brew --prefix llvm@13)/bin/${{ matrix.cxx }}"
-        echo "::set-output name=linker::$(brew --prefix llvm@13)/bin/${{ matrix.ld }}"
 
     - uses: actions/checkout@v3
       with:
@@ -44,7 +44,6 @@ jobs:
         -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -m64"
         -DCMAKE_C_COMPILER=${{ steps.compiler.outputs.c_compiler }}
         -DCMAKE_CXX_COMPILER=${{ steps.compiler.outputs.cxx_compiler }}
-        -DCMAKE_LINKER=${{ steps.compiler.outputs.linker }}
 
     - name: Build
       run: cmake --build build
