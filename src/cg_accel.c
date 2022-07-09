@@ -22,7 +22,8 @@
 
 #define ACCEL_DEBUG 0
 
-#define ColorAdd(a, b, c)      ((c)[0] = (a)[0] + (b)[0], (c)[1] = (a)[1] + (b)[1], (c)[2] = (a)[2] + (b)[2], (c)[3] = (a)[3] + (b)[3])
+#define _ColorClip(a)          ((a)[0] = fmax(fmin((a)[0],1),-1), (a)[1] = fmax(fmin((a)[1],1),-1), (a)[2] = fmax(fmin((a)[2],1),-1), (a)[3] = fmax(fmin((a)[3],1),-1))
+#define ColorAdd(a, b, c)      ((c)[0] = (a)[0] + (b)[0], (c)[1] = (a)[1] + (b)[1], (c)[2] = (a)[2] + (b)[2], (c)[3] = (a)[3] + (b)[3], _ColorClip(c))
 
 static vmCvar_t accel;
 static vmCvar_t accel_trueness;
@@ -33,7 +34,7 @@ static vmCvar_t accel_rgba;
 static vmCvar_t accel_neg_rgba;
 static vmCvar_t accel_hl_rgba;
 static vmCvar_t accel_hl_neg_rgba;
-static vmCvar_t accel_point_rgba;
+static vmCvar_t accel_current_rgba;
 
 static vmCvar_t accel_line_rgba;
 static vmCvar_t accel_line_neg_rgba;
@@ -48,15 +49,15 @@ static vmCvar_t accel_predict_add_rgba;
 static vmCvar_t accel_line_size;
 static vmCvar_t accel_vline_size;
 
-static vmCvar_t accel_ad;
+static vmCvar_t accel_sidemove;
 static vmCvar_t accel_forward;
-static vmCvar_t accel_nokeys;
+static vmCvar_t accel_nokey;
 
 static vmCvar_t accel_mode_neg;
 
 static vmCvar_t accel_vline;
 
-static vmCvar_t accel_zero_size;
+static vmCvar_t accel_condensed_size;
 
 #if ACCEL_DEBUG
   static vmCvar_t accel_verbose;
@@ -70,14 +71,14 @@ static cvarTable_t accel_cvars[] = {
 #define ACCEL_ENABLE              1 // the basic view
 #define ACCEL_HL_ACTIVE           2 // highlight active
 #define ACCEL_LINE_ACTIVE         4 // border line active
-#define ACCEL_BAR_AREA            8 // highlight active
+#define ACCEL_DISABLE_BAR_AREA    8 // highlight active
 #define ACCEL_VL_ACTIVE           16 // vertical line active
 #define ACCEL_PL_ACTIVE           32 // point line active
-#define ACCEL_ZB_ACTIVE           64 // zero bar active
-#define ACCEL_STATIC_VALUE        128 // values are constant
+#define ACCEL_CB_ACTIVE           64 // condensed bar active
+#define ACCEL_UNIFORM_VALUE       128 // uniform values
 
 
-  { &accel_trueness, "p_accel_trueness", "0b0010", CVAR_ARCHIVE_ND },
+  { &accel_trueness, "p_accel_trueness", "0b0000", CVAR_ARCHIVE_ND },
 
 #define ACCEL_TN_JUMPCROUCH      1
 #define ACCEL_TN_CPM             2
@@ -92,46 +93,47 @@ static cvarTable_t accel_cvars[] = {
   { &accel_neg_rgba, "p_accel_neg_rgba", ".9 .2 .2 .6", CVAR_ARCHIVE_ND },
   { &accel_hl_rgba, "p_accel_hl_rgba", ".3 1 .3 .9", CVAR_ARCHIVE_ND },
   { &accel_hl_neg_rgba, "p_accel_hl_neg_rgba", ".9 .3 .3 .9", CVAR_ARCHIVE_ND },
-  { &accel_point_rgba, "p_accel_point_rgba", ".9 .1 .9 .9", CVAR_ARCHIVE_ND },
+  { &accel_current_rgba, "p_accel_cur_rgba", ".9 .1 .9 .9", CVAR_ARCHIVE_ND },
   { &accel_line_rgba, "p_accel_line_rgba", ".5 .9 .5 .8", CVAR_ARCHIVE_ND },
   { &accel_line_neg_rgba, "p_accel_line_neg_rgba", ".9 .5 .5 .8", CVAR_ARCHIVE_ND },
   { &accel_line_hl_rgba, "p_accel_line_hl_rgba", ".6 1 .6 .9", CVAR_ARCHIVE_ND },
   { &accel_line_hl_neg_rgba, "p_accel_line_hl_neg_rgba", "1 .6 .6 .9", CVAR_ARCHIVE_ND },
   { &accel_vline_rgba, "p_accel_vline_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
   { &accel_zero_rgba, "p_accel_zero_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
-  { &accel_predict_add_rgba, "p_accel_predict_add_rgba", "-.2 -.1 -.2 -.2", CVAR_ARCHIVE_ND },
+  
+  { &accel_predict_add_rgba, "p_accel_pred_rgbam", "-.2 -.1 .2 -.2", CVAR_ARCHIVE_ND },
   
   { &accel_line_size, "p_accel_line_size", "5", CVAR_ARCHIVE_ND },
   { &accel_vline_size, "p_accel_vline_size", "1", CVAR_ARCHIVE_ND },
-  { &accel_zero_size, "p_accel_zero_size", "5", CVAR_ARCHIVE_ND },
+  { &accel_condensed_size, "p_accel_cond_size", "3", CVAR_ARCHIVE_ND },
 
-  { &accel_ad, "p_accel_ad", "3", CVAR_ARCHIVE_ND },
+  { &accel_sidemove, "p_accel_sm", "0", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_AD_DISABLED       0
 #define ACCEL_AD_NORMAL         1
 #define ACCEL_AD_PREDICT        2
-#define ACCEL_AD_PREDICT_BOTH   3
+//#define ACCEL_AD_PREDICT_BOTH   3
 
-  { &accel_forward, "p_accel_forward", "2", CVAR_ARCHIVE_ND },
+  { &accel_forward, "p_accel_fm", "0", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_FORWARD_DISABLED      0
 #define ACCEL_FORWARD_NORMAL        1
 #define ACCEL_FORWARD_PREDICT       2
 
-  { &accel_nokeys, "p_accel_nokeys", "2", CVAR_ARCHIVE_ND },
+  { &accel_nokey, "p_accel_nk", "0", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_NOKEYS_DISABLED      0
-#define ACCEL_NOKEYS_NORMAL        1
-#define ACCEL_NOKEYS_PREDICT       2
+#define ACCEL_NOKEY_NORMAL        1
+#define ACCEL_NOKEY_PREDICT       2
 
-  { &accel_mode_neg, "p_accel_neg_mode", "2", CVAR_ARCHIVE_ND },
+  { &accel_mode_neg, "p_accel_neg_mode", "0", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_NEG_MODE          0 // negative disabled
 #define ACCEL_NEG_MODE_ENABLED    1 // negative enabled
 #define ACCEL_NEG_MODE_ADJECENT   2 // only adjecent negative are shown
 #define ACCEL_NEG_MODE_ZERO_ONLY  3 // calculated but only at zero bar shown
 
-  { &accel_vline, "p_accel_vline", "0b10", CVAR_ARCHIVE_ND },
+  { &accel_vline, "p_accel_vline", "0b00", CVAR_ARCHIVE_ND },
 
 #define ACCEL_VL_USER_COLOR   1 // line have user defined color, if this is not set the colors are pos/neg
 #define ACCEL_VL_LINE_H       2 // include bar height
@@ -254,8 +256,8 @@ static void PmoveSingle(void)
                                (a.pm_ps.stats[13] & PSF_USERINPUT_CROUCH) / PSF_USERINPUT_CROUCH);
   }
 
-  if((accel_nokeys.value == 0 && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
-    || (accel_ad.value == 0 && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
+  if((accel_nokey.value == 0 && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
+    || (accel_sidemove.value == 0 && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
     || (accel_forward.value == 0 && a.pm.cmd.forwardmove && !a.pm.cmd.rightmove))
   {
     return;
@@ -288,7 +290,7 @@ static void PmoveSingle(void)
   order = 0; // intentionally here in case we predict both sides to prevent the rare case of adjecent false positive
 
   // predictions (simulate strafe)
-  if((accel_ad.value == ACCEL_AD_PREDICT || accel_ad.value == ACCEL_AD_PREDICT_BOTH) && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove){
+  if(accel_sidemove.value == ACCEL_AD_PREDICT && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove){
     a.pm.cmd.forwardmove = scale;
     a.pm.cmd.rightmove   = scale;
     predict = 1;
@@ -300,14 +302,14 @@ static void PmoveSingle(void)
     predict = 2;
   }
 
-  if(accel_nokeys.value == ACCEL_NOKEYS_PREDICT && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove){
+  if(accel_nokey.value == ACCEL_NOKEY_PREDICT && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove){
     a.pm.cmd.forwardmove = scale;
     a.pm.cmd.rightmove   = scale;
     predict = 3;
   }
 
   // Use default key combination when no user input
-  if (accel_nokeys.value == ACCEL_NOKEYS_NORMAL && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
+  if (accel_nokey.value == ACCEL_NOKEY_NORMAL && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
   {
     a.pm.cmd.forwardmove = scale;
     a.pm.cmd.rightmove   = scale;
@@ -364,7 +366,7 @@ static void PmoveSingle(void)
     x_angle_ratio = cg.refdef.fov_x / resolution;
     ypos_scaled = a.graph_yh[0] * cgs.screenXScale;
     hud_height_scaled = a.graph_yh[1] * cgs.screenXScale;
-    zero_gap_scaled = accel_zero_size.value  * cgs.screenXScale;
+    zero_gap_scaled = accel_condensed_size.value  * cgs.screenXScale;
     line_size_scaled = accel_line_size.value * cgs.screenXScale;
     vline_size_scaled = accel_vline_size.value * cgs.screenXScale;
 
@@ -380,7 +382,7 @@ static void PmoveSingle(void)
     }
 
     // simulate strafe on other side
-    if((predict == 1 && accel_ad.integer & ACCEL_AD_PREDICT_BOTH) || predict == 2 || predict == 3){
+    if(predict){
       a.pm.cmd.rightmove *= -1;
       if (a.pml.walking)
       {
@@ -543,15 +545,14 @@ Handles user intended acceleration
 */
 static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_)
 {
-  int i, j;
-  float y, dist_to_zero, dist_to_adj, height, line_height, speed_delta, cur_speed_delta = 0, angle_yaw_relative, normalizer,
-    resolution_ratio = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ?
-      cgs.glconfig.vidWidth / (float)GRAPH_MAX_RESOLUTION :
-      1.f;
-
-  int i_color;
+  int i, j, i_color, negative_draw_skip;
+  float y, dist_to_zero, dist_to_adj, height, line_height, speed_delta, cur_speed_delta = 0, angle_yaw_relative, normalizer;
   vec3_t wishdir_rotated;
   graph_bar *bar, *bar_adj;
+
+  float resolution_ratio = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ?
+      cgs.glconfig.vidWidth / (float)GRAPH_MAX_RESOLUTION :
+      1.f;
 
   // update current cvar values
   ParseVec(accel_yh.string, a.graph_yh, 2);
@@ -607,7 +608,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         bar = &(accel_graph[accel_graph_size++]);
         bar->x = i * resolution_ratio;
         bar->polarity = speed_delta ? (speed_delta > 0 ? 1 : -1) : 0;
-        bar->y = ypos_scaled + hud_height_scaled * (accel.integer & ACCEL_STATIC_VALUE ? bar->polarity : speed_delta / normalizer) * -1;
+        bar->y = ypos_scaled + hud_height_scaled * (accel.integer & ACCEL_UNIFORM_VALUE ? bar->polarity : speed_delta / normalizer) * -1;
         bar->width = resolution_ratio;
         bar->value = speed_delta;
         bar->order = order++;
@@ -620,7 +621,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   for(i = 0; i < accel_graph_size; ++i)
   {
     bar = &(accel_graph[i]);
-
+    negative_draw_skip = 0;
     do // dummy loop
     {
       // bar's drawing
@@ -652,7 +653,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         {
           line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
           // if border does not cover whole area
-          if(height > line_height && accel.integer & ACCEL_BAR_AREA)
+          if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
           {
             // draw uncovered area
             // trap_R_DrawStretchPic(bar->x, bar->y + line_height, bar->width,
@@ -670,7 +671,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           //trap_R_DrawStretchPic(bar->x, bar->y, bar->width, line_height, 0, 0, 0, 0, cgs.media.whiteShader);
           draw_positive(bar->x, bar->y, bar->width, line_height);
         }
-        else{
+        else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
           //trap_R_DrawStretchPic(bar->x, bar->y, bar->width, height, 0, 0, 0, 0, cgs.media.whiteShader);
           draw_positive(bar->x, bar->y, bar->width, height);
         }
@@ -691,7 +692,8 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
               && accel_graph[i+1].value > 0 // lets not consider 0 as positive in this case
             )
           )
-        { 
+        {
+          negative_draw_skip = 1;
           continue;
         }
 
@@ -723,7 +725,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         {
           line_height = (height > line_size_scaled ? line_size_scaled : height);
           // if border does not cover whole area
-          if(height > line_height && accel.integer & ACCEL_BAR_AREA)
+          if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
           {
             // draw uncovered area
             //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled, bar->width, height - line_height, 0, 0, 0, 0, cgs.media.whiteShader);  
@@ -739,7 +741,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled + (height - line_height), bar->width, line_height, 0, 0, 0, 0, cgs.media.whiteShader);
           draw_negative(bar->x, bar->y, bar->width, line_height);
         }
-        else{
+        else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
           //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled, bar->width, height, 0, 0, 0, 0, cgs.media.whiteShader);
           draw_negative(bar->x, bar->y, bar->width, height);
         }
@@ -747,7 +749,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     } while(0);
 
     // vertical line's drawing
-    if(bar->value && accel.integer & ACCEL_VL_ACTIVE)
+    if(!negative_draw_skip && bar->value && accel.integer & ACCEL_VL_ACTIVE)
     {
       int skip_no_adjecent;
       // for each side
@@ -794,7 +796,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   } // /vlines
 
   // zero bars
-  if(accel.integer & ACCEL_ZB_ACTIVE && !predict){
+  if(accel.integer & ACCEL_CB_ACTIVE){
     for(i = 0; i < accel_graph_size; ++i)
     {
       bar = &(accel_graph[i]);
@@ -817,9 +819,10 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         i_color = RGBA_I_ZERO;
       }
 
-      trap_R_SetColor(a.graph_rgba[i_color]);
-
-      draw_positive(bar->x, ypos_scaled, bar->width, zero_gap_scaled);
+      if((predict && bar->polarity > 0) || !predict){
+        trap_R_SetColor(a.graph_rgba[i_color]);
+        draw_positive(bar->x, ypos_scaled, bar->width, zero_gap_scaled);
+      }
     }
   }
   // /zero bars
