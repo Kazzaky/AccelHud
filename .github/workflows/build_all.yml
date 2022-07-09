@@ -44,8 +44,7 @@ jobs:
         -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -m64"
         -DCMAKE_C_COMPILER=${{ steps.compiler.outputs.c_compiler }}
         -DCMAKE_CXX_COMPILER=${{ steps.compiler.outputs.cxx_compiler }}
-        -DCMAKE_C_LINK_EXECUTABLE=${{ steps.compiler.outputs.linker }}
-        -DCMAKE_CXX_LINK_EXECUTABLE=${{ steps.compiler.outputs.linker }}
+        -DCMAKE_LINKER=${{ steps.compiler.outputs.linker }}
 
     - name: Build
       run: cmake --build build
@@ -65,4 +64,3 @@ jobs:
         path: bin/*.dylib
         if-no-files-found: error
         retention-days: 5
-        
