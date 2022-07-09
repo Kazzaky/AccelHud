@@ -3,7 +3,7 @@ name: build
 on: workflow_dispatch
 
 jobs:
-
+  
   macos:
     name: ${{ matrix.config }} macOS 64-bit (${{ matrix.c }})
     runs-on: macos-latest
@@ -14,6 +14,7 @@ jobs:
         include:
           - c: clang
             cxx: clang++
+            ld: lld
 
     steps:
     - name: Install tools
@@ -23,15 +24,11 @@ jobs:
       id: compiler
       run: |
         # see https://github.com/actions/virtual-environments/blob/main/images/macos/macos-11-Readme.md#language-and-runtime
-        if [ ${{ matrix.c }} == gcc ]; then
-          # Apple redirects gcc to clang => explicitly use gcc-11
-          echo "::set-output name=c_compiler::${{ matrix.c }}-11"
-          echo "::set-output name=cxx_compiler::${{ matrix.cxx }}-11"
-        else
-          # clang 13.0.0 hangs while building cg_vm.c (related to branching macro UOP()) => use clang 13.0.1
-          echo "::set-output name=c_compiler::$(brew --prefix llvm@13)/bin/${{ matrix.c }}"
-          echo "::set-output name=cxx_compiler::$(brew --prefix llvm@13)/bin/${{ matrix.cxx }}"
-        fi
+        # clang 13.0.0 hangs while building cg_vm.c (related to branching macro UOP()) => use clang 13.0.1
+        echo "::set-output name=c_compiler::$(brew --prefix llvm@13)/bin/${{ matrix.c }}"
+        echo "::set-output name=cxx_compiler::$(brew --prefix llvm@13)/bin/${{ matrix.cxx }}"
+        echo "::set-output name=linker::$(brew --prefix llvm@13)/bin/${{ matrix.ld }}"
+
     - uses: actions/checkout@v3
       with:
         submodules: recursive
@@ -43,10 +40,12 @@ jobs:
         -G Ninja
         -DBINARY_NAME=cgamex86_64
         -DCMAKE_BUILD_TYPE=${{ matrix.config }}
-        -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS} -fuse-ld=gold -m64"
-        -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -fuse-ld=gold -m64"
+        -DCMAKE_C_FLAGS="${CMAKE_C_FLAGS} -m64"
+        -DCMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -m64"
         -DCMAKE_C_COMPILER=${{ steps.compiler.outputs.c_compiler }}
         -DCMAKE_CXX_COMPILER=${{ steps.compiler.outputs.cxx_compiler }}
+        -DCMAKE_C_LINK_EXECUTABLE=${{ steps.compiler.outputs.linker }}
+        -DCMAKE_CXX_LINK_EXECUTABLE=${{ steps.compiler.outputs.linker }}
 
     - name: Build
       run: cmake --build build
@@ -66,3 +65,4 @@ jobs:
         path: bin/*.dylib
         if-no-files-found: error
         retention-days: 5
+        
