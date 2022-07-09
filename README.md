@@ -37,6 +37,12 @@ xxxX - show true jump/crouch zones
 
 `p_accel_min_speed X` - minimal speed in ups, which is required to draw hud
 
+`p_accel_neg_mode X` - modes for showing negative acceleration
+
+0 - disable negative acceleration\
+1 - enable negative acceleration\
+2 - show only adjecent negative acceleration
+
 ### Proportions:
 `p_accel_yh X X`\
 X x - y coord of hud center\
