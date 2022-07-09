@@ -53,8 +53,8 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 `p_accel_fm X` - while only forwardmove (W key)\
 `p_accel_nk X` - while no key pressed
 
-0 - do not draw hud at all
-1 - draw normal
+0 - do not draw hud at all\
+1 - draw normal\
 2 - draw prediction of strafe
 
 ### Colors:
