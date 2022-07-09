@@ -35,7 +35,7 @@ xXxx - show true ground control zones\
 xxXx - show true CPM air control zones\
 xxxX - show true jump/crouch zones
 
-`p_accel_min_speed X` - minimal speed in ups, which is required to draw hud\
+`p_accel_min_speed X` - minimal speed in ups, which is required to draw hud
 
 ### Proportions:
 `p_accel_yh X X`\
