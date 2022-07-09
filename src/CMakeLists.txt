@@ -14,6 +14,8 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     add_custom_target(cgame_obj_mod ALL
         DEPENDS ${CMAKE_BINARY_DIR}/cg_hud.c.o
     )
+
+    add_dependencies(${BINARY_NAME} cgame_obj_mod)
 else()
     target_link_options(${BINARY_NAME} PRIVATE "LINKER:--wrap,init_hud,--wrap,update_hud,--wrap,draw_hud")
     target_link_options(UnitTest PRIVATE "LINKER:--wrap,init_hud,--wrap,update_hud,--wrap,draw_hud")

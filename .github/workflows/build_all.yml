@@ -19,7 +19,7 @@ jobs:
     - name: Install tools
       run: |
         brew install ninja
-        brew install crosstool-ng
+        brew install binutils
 
     - name: Update compiler
       id: compiler
