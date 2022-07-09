@@ -131,7 +131,7 @@ static cvarTable_t accel_cvars[] = {
 //#define ACCEL_NEG_MODE          0 // negative disabled
 #define ACCEL_NEG_MODE_ENABLED    1 // negative enabled
 #define ACCEL_NEG_MODE_ADJECENT   2 // only adjecent negative are shown
-#define ACCEL_NEG_MODE_ZERO_ONLY  3 // calculated but only at zero bar shown
+//#define ACCEL_NEG_MODE_ZERO_ONLY  3 // calculated but only at zero bar shown
 
   { &accel_vline, "p_accel_vline", "0b00", CVAR_ARCHIVE_ND },
 
