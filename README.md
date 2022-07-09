@@ -8,10 +8,10 @@ Please note that the AccelHud is currently only pre-alpha version, might be bugg
 
 ## Binaries:
 
-|            | **Windows** | **Linux** |
-| :--------: | :---------: | :-------: |
+|            | **Windows** | **Linux** | **macOS** |
+| :--------: | :---------: | :-------: | :-------: |
 | **32-bit** | [cgamex86.dll](../../releases/download/latest/cgamex86.dll) | [cgamei386.so](../../releases/download/latest/cgamei386.so) |
-| **64-bit** | [cgamex86_64.dll](../../releases/download/latest/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/latest/cgamex86_64.so) |
+| **64-bit** | [cgamex86_64.dll](../../releases/download/latest/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/latest/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/latest/cgamex86_64.dylib) |
 
 MacOS is currently not supported.
 
