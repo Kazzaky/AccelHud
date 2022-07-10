@@ -40,7 +40,7 @@ xxXx - show true CPM air control zones\
 xxxX - show true jump/crouch zones
 
 `p_accel_vline 0bXX`\
-Xx - use custom colors for vertical lines
+Xx - use custom colors for vertical lines\
 xX - include line graph height for vertical lines
 
 `p_accel_min_speed X` - minimal speed in ups, which is required to draw hud
