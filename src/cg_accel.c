@@ -19,6 +19,7 @@
 #include "cg_syscall.h"
 
 #include "common.h"
+#include "q_shared.h"
 
 #define ACCEL_DEBUG 0
 
@@ -44,20 +45,26 @@ static vmCvar_t accel_line_hl_neg_rgba;
 static vmCvar_t accel_vline_rgba;
 static vmCvar_t accel_zero_rgba;
 
-static vmCvar_t accel_predict_add_rgba;
+static vmCvar_t accel_predict_strafe_rgba;
+static vmCvar_t accel_predict_sidemove_rgba;
+static vmCvar_t accel_predict_opposite_rgba;
 
 static vmCvar_t accel_line_size;
 static vmCvar_t accel_vline_size;
+static vmCvar_t accel_condensed_size;
+static vmCvar_t accel_predict_offset;
 
 static vmCvar_t accel_sidemove;
 static vmCvar_t accel_forward;
 static vmCvar_t accel_nokey;
+static vmCvar_t accel_strafe;
+static vmCvar_t accel_opposite;
 
 static vmCvar_t accel_mode_neg;
 
 static vmCvar_t accel_vline;
 
-static vmCvar_t accel_condensed_size;
+
 
 #if ACCEL_DEBUG
   static vmCvar_t accel_verbose;
@@ -101,30 +108,43 @@ static cvarTable_t accel_cvars[] = {
   { &accel_vline_rgba, "p_accel_vline_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
   { &accel_zero_rgba, "p_accel_zero_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
   
-  { &accel_predict_add_rgba, "p_accel_pred_rgbam", "-.2 -.1 .2 -.2", CVAR_ARCHIVE_ND },
+  { &accel_predict_strafe_rgba, "p_accel_p_strafe_rgbam", "-.2 -.1 .4 -.4", CVAR_ARCHIVE_ND },
+  { &accel_predict_sidemove_rgba, "p_accel_p_sm_rgbam", ".4 -.1 -.2 -.4", CVAR_ARCHIVE_ND },
+  { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 .-8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
   
   { &accel_line_size, "p_accel_line_size", "5", CVAR_ARCHIVE_ND },
   { &accel_vline_size, "p_accel_vline_size", "1", CVAR_ARCHIVE_ND },
   { &accel_condensed_size, "p_accel_cond_size", "3", CVAR_ARCHIVE_ND },
+  { &accel_predict_offset, "p_accel_p_offset", "30", CVAR_ARCHIVE_ND },
 
-  { &accel_sidemove, "p_accel_sm", "0", CVAR_ARCHIVE_ND },
+  { &accel_sidemove, "p_accel_p_sm", "0", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_AD_DISABLED       0
 #define ACCEL_AD_NORMAL         1
 #define ACCEL_AD_PREDICT        2
 //#define ACCEL_AD_PREDICT_BOTH   3
 
-  { &accel_forward, "p_accel_fm", "0", CVAR_ARCHIVE_ND },
+  { &accel_forward, "p_accel_p_fm", "0", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_FORWARD_DISABLED      0
 #define ACCEL_FORWARD_NORMAL        1
 #define ACCEL_FORWARD_PREDICT       2
 
-  { &accel_nokey, "p_accel_nk", "0", CVAR_ARCHIVE_ND },
+  { &accel_nokey, "p_accel_p_nk", "0", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_NOKEYS_DISABLED      0
 #define ACCEL_NOKEY_NORMAL        1
 #define ACCEL_NOKEY_PREDICT       2
+
+  { &accel_strafe, "p_accel_p_strafe", "0", CVAR_ARCHIVE_ND },
+
+#define ACCEL_STRAFE_PREDICT       2 // just to make it corelate with other keys
+
+  { &accel_opposite, "p_accel_p_opposite", "0", CVAR_ARCHIVE_ND },
+
+#define ACCEL_OPPOSITE_PREDICT       2 // just to make it corelate with other keys
+
+
 
   { &accel_mode_neg, "p_accel_neg_mode", "0", CVAR_ARCHIVE_ND },
 
@@ -155,8 +175,20 @@ enum {
   RGBA_I_BORDER_HL_NEG,
   RGBA_I_VLINE,
   RGBA_I_ZERO,
-  RGBA_I_PREDICT,
+  RGBA_I_PREDICT_WAD,
+  RGBA_I_PREDICT_AD,
+  RGBA_I_PREDICT_OPPOSITE,
   RGBA_I_LENGTH
+};
+
+enum {
+  PREDICT_NONE,
+  PREDICT_SM_STRAFE,
+  PREDICT_FMNK_STRAFE,
+  PREDICT_FMNK_SM,
+  PREDICT_STRAFE_SM,
+  PREDICT_SM_STRAFE_ADD, // lets keep this for now
+  PREDICT_OPPOSITE
 };
 
 // no help here, just because there is no space in the proxymod help table and i don't want to modify it (for now)
@@ -172,7 +204,7 @@ typedef struct {
 
 #define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded
 
-static graph_bar accel_graph[GRAPH_MAX_RESOLUTION*3]; // regular + prediction left + prediction right, i know its insane but for the sake to not overflow 
+static graph_bar accel_graph[GRAPH_MAX_RESOLUTION*4]; // regular + prediction other + prediction left + prediction right, i know its insane but for the sake to not overflow 
 static int accel_graph_size;
 
 static int resolution;
@@ -183,6 +215,7 @@ static float hud_height_scaled;
 static float zero_gap_scaled;
 static float line_size_scaled;
 static float vline_size_scaled;
+static float predict_offset_scaled;
 
 static vec4_t color_tmp;
 
@@ -238,6 +271,20 @@ void draw_accel(void)
   // TODO: put drawing here
 }
 
+static void move(void)
+{
+  if (a.pml.walking)
+  {
+    // walking on ground
+    PM_WalkMove();
+  }
+  else
+  {
+    // airborne
+    PM_AirMove();
+  }
+}
+
 static void PmoveSingle(void)
 {
   int8_t const scale = a.pm_ps.stats[13] & PSF_USERINPUT_WALK ? 64 : 127;
@@ -286,35 +333,6 @@ static void PmoveSingle(void)
     a.pm.cmd.upmove      = 0;
   }
 
-  predict = 0;
-  order = 0; // intentionally here in case we predict both sides to prevent the rare case of adjecent false positive
-
-  // predictions (simulate strafe)
-  if(accel_sidemove.value == ACCEL_AD_PREDICT && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove){
-    a.pm.cmd.forwardmove = scale;
-    a.pm.cmd.rightmove   = scale;
-    predict = 1;
-  }
-
-  if(accel_forward.value == ACCEL_FORWARD_PREDICT && a.pm.cmd.forwardmove && !a.pm.cmd.rightmove){
-    a.pm.cmd.forwardmove = scale;
-    a.pm.cmd.rightmove   = scale;
-    predict = 2;
-  }
-
-  if(accel_nokey.value == ACCEL_NOKEY_PREDICT && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove){
-    a.pm.cmd.forwardmove = scale;
-    a.pm.cmd.rightmove   = scale;
-    predict = 3;
-  }
-
-  // Use default key combination when no user input
-  if (accel_nokey.value == ACCEL_NOKEY_NORMAL && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
-  {
-    a.pm.cmd.forwardmove = scale;
-    a.pm.cmd.rightmove   = scale;
-  }
-
   // set mins, maxs, and viewheight
   PM_CheckDuck(&a.pm, &a.pm_ps);
 
@@ -324,76 +342,152 @@ static void PmoveSingle(void)
   // set groundentity
   PM_GroundTrace(&a.pm, &a.pm_ps, &a.pml);
 
-  // if (a.pm_ps.powerups[PW_FLIGHT])
-  // {
-  //   // // flight powerup doesn't allow jump and has different friction
-  //   // PM_FlyMove();
-  //   return;
-  // }
-  // else if (a.pm_ps.pm_flags & PMF_GRAPPLE_PULL)
-  // {
-  //   // PM_GrappleMove();
-  //   // // We can wiggle a bit
-  //   // PM_AirMove();
-  //   return;
-  // }
-  // else if (a.pm_ps.pm_flags & PMF_TIME_WATERJUMP)
-  // {
-  //   // PM_WaterJumpMove();
-  //   return;
-  // }
-  // else if (a.pm.waterlevel > 1)
-  // {
-  //   // // swimming
-  //   // PM_WaterMove();
-  //   return;
-  // }
-
+  // note: none of the above (PM_CheckDuck, PM_SetWaterLevel, PM_GroundTrace) use a.pm.cmd.forwardmove a.pm.cmd.rightmove)
 
   if(a.pm_ps.powerups[PW_FLIGHT] || a.pm_ps.pm_flags & PMF_GRAPPLE_PULL
       || a.pm_ps.pm_flags & PMF_TIME_WATERJUMP || a.pm.waterlevel > 1)
   {
     return;
   }
-  else {
-    // we are gonna draw
 
-    // update static variables
-    ParseVec(accel_yh.string, a.graph_yh, 2);
+  // drawing gonna happend
 
-    resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
-    center = resolution / 2;
-    x_angle_ratio = cg.refdef.fov_x / resolution;
-    ypos_scaled = a.graph_yh[0] * cgs.screenXScale;
-    hud_height_scaled = a.graph_yh[1] * cgs.screenXScale;
-    zero_gap_scaled = accel_condensed_size.value  * cgs.screenXScale;
-    line_size_scaled = accel_line_size.value * cgs.screenXScale;
-    vline_size_scaled = accel_vline_size.value * cgs.screenXScale;
+  // update static variables
+  ParseVec(accel_yh.string, a.graph_yh, 2);
 
-    if (a.pml.walking)
-    {
-      // walking on ground
-      PM_WalkMove();
-    }
-    else
-    {
-      // airborne
-      PM_AirMove();
-    }
+  resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
+  center = resolution / 2;
+  x_angle_ratio = cg.refdef.fov_x / resolution;
+  ypos_scaled = a.graph_yh[0] * cgs.screenXScale;
+  hud_height_scaled = a.graph_yh[1] * cgs.screenXScale;
+  zero_gap_scaled = accel_condensed_size.value  * cgs.screenXScale;
+  line_size_scaled = accel_line_size.value * cgs.screenXScale;
+  vline_size_scaled = accel_vline_size.value * cgs.screenXScale;
+  predict_offset_scaled = accel_predict_offset.value * cgs.screenXScale;
 
-    // simulate strafe on other side
-    if(predict){
+  predict = 0;
+  order = 0; // intentionally here in case we predict both sides to prevent the rare case of adjecent false positive
+
+  signed char key_forwardmove = a.pm.cmd.forwardmove,
+      key_rightmove = a.pm.cmd.rightmove;
+
+  // predictions (simulate strafe or a/d)
+  if((a.pm_ps.pm_flags & PMF_PROMODE) && accel_sidemove.value == ACCEL_AD_PREDICT && !key_forwardmove && key_rightmove){
+    a.pm.cmd.forwardmove = scale;
+    a.pm.cmd.rightmove   = scale;
+    predict = PREDICT_SM_STRAFE;
+    move();
+    // opposite side
+    a.pm.cmd.rightmove *= -1;
+    move();
+  }
+
+  if((accel_forward.value == ACCEL_FORWARD_PREDICT && key_forwardmove && !key_rightmove)
+      || (accel_nokey.value == ACCEL_NOKEY_PREDICT && !key_forwardmove && !key_rightmove)){
+    a.pm.cmd.forwardmove = scale;
+    a.pm.cmd.rightmove   = scale;
+    predict = PREDICT_FMNK_STRAFE;
+    move();
+    // opposite side
+    a.pm.cmd.rightmove *= -1;
+    move();
+    // for vq3 additional prediction (case side + forward)
+    if(!(a.pm_ps.pm_flags & PMF_PROMODE)){
+      predict = PREDICT_FMNK_SM;
+      a.pm.cmd.forwardmove = 0;
+      a.pm.cmd.rightmove   = scale;
+      move();
       a.pm.cmd.rightmove *= -1;
-      if (a.pml.walking)
-      {
-        // walking on ground
-        PM_WalkMove();
-      }
-      else
-      {
-        // airborne
-        PM_AirMove();
-      }
+      move();
+    }
+    return;
+  }
+
+  // vq3 specific prediction
+  if(!(a.pm_ps.pm_flags & PMF_PROMODE))
+  {
+    if(accel_sidemove.value == ACCEL_AD_PREDICT && !key_forwardmove && key_rightmove){
+      // the strafe predict
+      a.pm.cmd.forwardmove = scale;
+      a.pm.cmd.rightmove   = scale;
+      predict = PREDICT_SM_STRAFE_ADD;
+      move();
+      a.pm.cmd.rightmove *= -1;
+      move();
+    }
+    // note: both sidemove and strafe predict can be drawn at the same time
+    if(accel_strafe.value == ACCEL_STRAFE_PREDICT && key_forwardmove && key_rightmove){
+      // the sidemove predict
+      a.pm.cmd.forwardmove = 0;
+      a.pm.cmd.rightmove   = scale;
+      predict = PREDICT_STRAFE_SM;
+      move();
+      a.pm.cmd.rightmove *= -1;
+      move();
+    }
+  }
+
+  // predict same move just opposite side
+  if(accel_opposite.value == ACCEL_OPPOSITE_PREDICT)
+  {
+    // a/d oposite only for vq3
+    if(!(a.pm_ps.pm_flags & PMF_PROMODE) && !key_forwardmove && key_rightmove){
+      predict = PREDICT_OPPOSITE;
+      a.pm.cmd.forwardmove = 0;
+      a.pm.cmd.rightmove = key_rightmove * -1;
+      move();
+    }
+
+    if(key_forwardmove && key_rightmove){
+      predict = PREDICT_OPPOSITE;
+      a.pm.cmd.forwardmove = scale;
+      a.pm.cmd.rightmove = key_rightmove * -1;
+      move();
+    }
+  }
+
+  // restore original keys
+  a.pm.cmd.forwardmove = key_forwardmove;
+  a.pm.cmd.rightmove   = key_rightmove;
+
+  // reset predict
+  predict = PREDICT_NONE;
+
+  // Use default key combination when no user input
+  if (accel_nokey.value == ACCEL_NOKEY_NORMAL && !key_forwardmove && !key_rightmove)
+  {
+    a.pm.cmd.forwardmove = scale;
+    a.pm.cmd.rightmove   = scale;
+  }
+
+  // regular move
+  move();
+}
+
+static void set_color_inc_pred(int regular)
+{
+  switch(predict){
+    case PREDICT_OPPOSITE:{
+      ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_OPPOSITE], color_tmp);
+      trap_R_SetColor(color_tmp);
+      break;
+    }
+    case PREDICT_SM_STRAFE:
+    case PREDICT_FMNK_STRAFE:
+    case PREDICT_SM_STRAFE_ADD:{
+      ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_WAD], color_tmp);
+      trap_R_SetColor(color_tmp);
+      break;
+    }
+    case PREDICT_FMNK_SM:
+    case PREDICT_STRAFE_SM:{
+      ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_AD], color_tmp);
+      trap_R_SetColor(color_tmp);
+      break;
+    }
+    case 0:
+    default:{
+      trap_R_SetColor(a.graph_rgba[regular]);
     }
   }
 }
@@ -401,7 +495,12 @@ static void PmoveSingle(void)
 // does not set color
 inline static void draw_positive(float x, float y, float w, float h)
 {
-  trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+  if(predict){
+    trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2 - predict_offset_scaled, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+  }
+  else {
+    trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+  }
 }
 
 // does not set color
@@ -415,23 +514,11 @@ inline static void _draw_vline(const graph_bar * const bar, int side, float y_of
 {
   if(bar->polarity > 0)
   {
-    if(predict){
-      ColorAdd(a.graph_rgba[accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_POS], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-      trap_R_SetColor(color_tmp);
-    }
-    else {
-      trap_R_SetColor(a.graph_rgba[accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_POS]);
-    }
+    set_color_inc_pred(accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_POS);
     draw_positive(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + bar->polarity * y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
   }
   else {
-    if(predict){
-      ColorAdd(a.graph_rgba[accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_NEG], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-      trap_R_SetColor(color_tmp);
-    }
-    else {
-      trap_R_SetColor(a.graph_rgba[accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_NEG]);
-    }
+    set_color_inc_pred(accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_NEG);
     draw_negative(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + bar->polarity * y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
   }
 }
@@ -446,6 +533,7 @@ inline static void vline_to(const graph_bar * const bar, int side, float dist_to
     _draw_vline(bar, side, line_size_scaled, dist_to_zero - line_size_scaled);
   }
 }
+
 
 static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, /*vec3_t accel_out,*/ int verbose){
   int			i;
@@ -570,7 +658,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   if(a.pml.walking){
     normalizer *= 15.f;// 38.4f * 1.41421356237f;
   }
-  else if (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove && accel_trueness.integer & ACCEL_TN_CPM){
+  else if (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove && accel_trueness.integer & ACCEL_TN_CPM && a.pm_ps.pm_flags & PMF_PROMODE){
     normalizer *= 11.72f; // 30.f * 1.41421356237f;
   }
 
@@ -627,23 +715,11 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       // bar's drawing
       if(bar->polarity > 0){ // positive bar
         if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
-          if(predict){
-            ColorAdd(a.graph_rgba[RGBA_I_HL_POS], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-            trap_R_SetColor(color_tmp);
-          }
-          else {
-            trap_R_SetColor(a.graph_rgba[RGBA_I_HL_POS]);
-          }
+          set_color_inc_pred(RGBA_I_HL_POS);
           i_color = RGBA_I_BORDER_HL_POS;
         }
-        else{
-          if(predict){
-            ColorAdd(a.graph_rgba[RGBA_I_POS], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-            trap_R_SetColor(color_tmp);
-          }
-          else {
-            trap_R_SetColor(a.graph_rgba[RGBA_I_POS]);
-          }
+        else {
+          set_color_inc_pred(RGBA_I_POS);
           i_color = RGBA_I_BORDER;
         }
         
@@ -661,13 +737,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
             draw_positive(bar->x, bar->y + line_height, bar->width, height - line_height);
           }
           // draw border line
-          if(predict){
-            ColorAdd(a.graph_rgba[i_color], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-            trap_R_SetColor(color_tmp);
-          }
-          else {
-            trap_R_SetColor(a.graph_rgba[i_color]);
-          }
+          set_color_inc_pred(i_color);
           //trap_R_DrawStretchPic(bar->x, bar->y, bar->width, line_height, 0, 0, 0, 0, cgs.media.whiteShader);
           draw_positive(bar->x, bar->y, bar->width, line_height);
         }
@@ -699,23 +769,11 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
         if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta)
         {
-          if(predict){
-            ColorAdd(a.graph_rgba[RGBA_I_HL_NEG], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-            trap_R_SetColor(color_tmp);
-          }
-          else {
-            trap_R_SetColor(a.graph_rgba[RGBA_I_HL_NEG]);
-          }
+          set_color_inc_pred(RGBA_I_HL_NEG);
           i_color = RGBA_I_BORDER_HL_NEG;
         }
         else{
-          if(predict){
-            ColorAdd(a.graph_rgba[RGBA_I_NEG], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-            trap_R_SetColor(color_tmp);
-          }
-          else {
-            trap_R_SetColor(a.graph_rgba[RGBA_I_NEG]);
-          }
+          set_color_inc_pred(RGBA_I_NEG);
           i_color = RGBA_I_BORDER_NEG;
         }
 
@@ -731,13 +789,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
             //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled, bar->width, height - line_height, 0, 0, 0, 0, cgs.media.whiteShader);  
             draw_negative(bar->x, bar->y - line_height, bar->width, height - line_height);
           }
-          if(predict){
-            ColorAdd(a.graph_rgba[i_color], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-            trap_R_SetColor(color_tmp);
-          }
-          else {
-            trap_R_SetColor(a.graph_rgba[i_color]);
-          }
+          set_color_inc_pred(i_color);
           //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled + (height - line_height), bar->width, line_height, 0, 0, 0, 0, cgs.media.whiteShader);
           draw_negative(bar->x, bar->y, bar->width, line_height);
         }
@@ -765,7 +817,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         // current bar do not have an adjecent
         if(skip_no_adjecent)
         {
-          // by default be allow drawing vlines for no adjecent
+          // by default lets allow drawing vlines for no adjecent
           vline_to(bar, j, dist_to_zero);
           continue;
         }
@@ -792,8 +844,8 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           vline_to(bar, j, dist_to_zero);
         }
       }
-    }
-  } // /vlines
+    } // /vlines
+  } // /for each bar
 
   // zero bars
   if(accel.integer & ACCEL_CB_ACTIVE){
@@ -820,7 +872,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       }
 
       if((predict && bar->polarity > 0) || !predict){
-        trap_R_SetColor(a.graph_rgba[i_color]);
+        set_color_inc_pred(i_color);
         draw_positive(bar->x, ypos_scaled, bar->width, zero_gap_scaled);
       }
     }
@@ -828,15 +880,10 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   // /zero bars
 
   // point line
-  if(accel.integer & ACCEL_PL_ACTIVE)
+  if(!predict && accel.integer & ACCEL_PL_ACTIVE)
   {
-    if(predict){
-      ColorAdd(a.graph_rgba[RGBA_I_POINT], a.graph_rgba[RGBA_I_PREDICT], color_tmp);
-      trap_R_SetColor(color_tmp);
-    }
-    else {
-      trap_R_SetColor(a.graph_rgba[RGBA_I_POINT]);
-    }
+    set_color_inc_pred(RGBA_I_POINT);
+
     y = ypos_scaled + hud_height_scaled * (cur_speed_delta / normalizer) * -1;
     if(cur_speed_delta > 0){
       //trap_R_DrawStretchPic(center - (1 * cgs.screenXScale) / 2, y, 1 * cgs.screenXScale, ypos_scaled - y, 0, 0, 0, 0, cgs.media.whiteShader);
