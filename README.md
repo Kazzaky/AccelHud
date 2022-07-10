@@ -15,7 +15,9 @@ Please note that the AccelHud is currently only pre-alpha version, might be bugg
 
 ## Build / Instalation
 
-Follow instructions at [Jelvan1/cgame_proxymod](https://github.com/Jelvan1/cgame_proxymod) which is the original mod, this repository is only extention for it. Only exception is for macOS build, where you need *binutils* package, use `brew install binutils`, then provide path to the **objcopy** program installed with binutils, via cmake option `OBJCOPY_CMD` or argument `-DOBJCOPY_CMD=path/to/the/objcopy` (unless you add the binutils installation folder to environment variable PATH).
+Follow instructions at [Jelvan1/cgame_proxymod](https://github.com/Jelvan1/cgame_proxymod) which is the original mod, this repository is only extention for it.
+
+Only exception is for macOS build, where you need *binutils* package, use `brew install binutils`, then provide path to the **objcopy** program installed with binutils to cmake as argument `-DOBJCOPY_CMD=path/to/the/objcopy` (unless you add the binutils installation folder to environment variable PATH).
 
 ## Configuration options
 
@@ -64,7 +66,7 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 1 - draw normal\
 2 - draw prediction of strafe/sidemove
 
-`p_accel_p_strafe X` - while strafing (WA or WD keys) *only vq3*
+`p_accel_p_strafe X` - while strafing (WA or WD keys) *only vq3*\
 `p_accel_p_opposite X` - the current move just on opposite side
 
 0 - do not predict\
@@ -88,8 +90,8 @@ Colors order is: Red Green Blue Alpha, each as value between 0 and 1.\
 For example: `p_accel_rgba .2 .9 .2 .6`.
 
 ### Color modificators:
-`p_accel_p_strafe_rgbam X X X X` - color modificator for predicting strafe
-`p_accel_p_sm_rgbam X X X X` - color modificator for predicting sidemove
+`p_accel_p_strafe_rgbam X X X X` - color modificator for predicting strafe\
+`p_accel_p_sm_rgbam X X X X` - color modificator for predicting sidemove\
 `p_accel_p_opposite_rgbam X X X X` - color modificator for predicting opposite side
 
 
