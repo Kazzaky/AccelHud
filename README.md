@@ -17,7 +17,9 @@ Please note that the AccelHud is currently only pre-alpha version, might be bugg
 
 Follow instructions at [Jelvan1/cgame_proxymod](https://github.com/Jelvan1/cgame_proxymod) which is the original mod, this repository is only extention for it.
 
-Only exception is for macOS build, where you need *binutils* package, use `brew install binutils`, then provide path to the **objcopy** program installed with binutils to cmake as argument `-DOBJCOPY_CMD=path/to/the/objcopy` (unless you add the binutils installation folder to environment variable PATH).
+In addition for macOS build, you need *binutils* package, use `brew install binutils`, then provide path to the **objcopy** program installed with binutils to cmake as argument `-DOBJCOPY_CMD=path/to/the/objcopy` (unless you add the binutils installation folder to environment variable PATH).
+
+Only gcc and clang compilers are supported.
 
 ## Configuration options
 
