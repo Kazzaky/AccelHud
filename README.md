@@ -101,7 +101,7 @@ For example: `p_accel_rgba .2 .9 .2 .6`.
 `p_accel_p_opposite_rgbam X X X X` - color modificator for predicting opposite side
 
 
-Values can range from -1 to 1, for example `p_accel_predict_add_rgba -.2 -.1 .2 -.2` would make of
+Values can range from -1 to 1, for example `p_accel_p_strafe_rgbam -.2 -.1 .2 -.2` would make of
 `p_accel_rgba .2 .9 .2 .6` new color: `0 .8 .4 .4`.
 
 You can use accelhud.cfg as default config, copy that file into your /defrag folder, then add `exec accelhud.cfg` into your autoexec.cfg.
