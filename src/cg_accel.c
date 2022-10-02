@@ -884,7 +884,16 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         angle_yaw_relative = (i - (resolution / 2.f)) * x_angle_ratio;
         VectorCopy(wishdir, wishdir_rotated);
         rotatePointByAngle(wishdir_rotated, angle_yaw_relative);
-        speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, accel_, 0);
+
+        // special case
+        if (move_type == MOVE_AIR_CPM && !(!a.pm.cmd.forwardmove && a.pm.cmd.rightmove) && DotProduct(a.pm_ps.velocity, wishdir_rotated) < 0)
+        {
+          speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, 2.5f, 0);
+        }
+        else
+        {
+          speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, accel_, 0);
+        }
       }
 
       // automatically omit negative accel when plotting predictions, also when negatives are disabled ofc
