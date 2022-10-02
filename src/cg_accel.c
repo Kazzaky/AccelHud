@@ -191,6 +191,15 @@ enum {
   PREDICT_OPPOSITE
 };
 
+enum {
+  MOVE_AIR,
+  MOVE_AIR_CPM,
+  MOVE_WALK,
+  MOVE_WALK_SLICK,
+};
+
+static int move_type;
+
 // no help here, just because there is no space in the proxymod help table and i don't want to modify it (for now)
 
 typedef struct {
@@ -338,6 +347,9 @@ static void PmoveSingle(void)
 
   // set watertype, and waterlevel
   PM_SetWaterLevel(&a.pm, &a.pm_ps);
+
+  // needed for PM_GroundTrace
+  a.pm.tracemask = a.pm_ps.pm_type == PM_DEAD ? MASK_PLAYERSOLID & ~CONTENTS_BODY : MASK_PLAYERSOLID;
 
   // set groundentity
   PM_GroundTrace(&a.pm, &a.pm_ps, &a.pml);
@@ -535,83 +547,272 @@ inline static void vline_to(const graph_bar * const bar, int side, float dist_to
 }
 
 
+// * original replaced by reworked
+// static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, /*vec3_t accel_out,*/ int verbose){
+//   int			i;
+//   float		addspeed, accelspeed, currentspeed, accelspeed_delta;
+//   vec3_t  velpredict;
+//   (void)verbose;
+
+//   vec3_t velocity;
+//   VectorCopy(a.pm_ps.velocity, velocity);
+
+//   Sys_SnapVector(velocity); // solves bug in spectator mode
+
+//   #if ACCEL_DEBUG
+//     if(verbose && accel_verbose.value){
+//       trap_Print(vaf("velocity[0] = %.5f, velocity[1] = %.5f, velocity[2] = %.5f\n", velocity[0], velocity[1], velocity[2]));
+//     }
+//     if(verbose && accel_verbose.value){
+//       trap_Print(vaf("wishdir[0] = %.5f, wishdir[1] = %.5f, wishdir[2] = %.5f\n", wishdir[0], wishdir[1], wishdir[2]));
+//     }
+//   #endif // ACCEL_DEBUG
+
+//   currentspeed = DotProduct (velocity, wishdir); // the velocity speed part regardless the wish direction
+//   #if ACCEL_DEBUG
+//     if(verbose && accel_verbose.value){
+//       trap_Print(vaf("accel_ = %.3f, curs = %.3f, wishs = %.3f", accel_, currentspeed, wishspeed));
+//     }
+//   #endif // ACCEL_DEBUG
+//   addspeed = wishspeed - currentspeed;
+//   #if ACCEL_DEBUG
+//     if(verbose && accel_verbose.value){
+//       if (addspeed <= 0) {
+//         trap_Print(vaf(", adds = %.3f clip !, accs = NaN, delta = NaN\n", addspeed));
+//       }else{
+//         trap_Print(vaf(", adds = %.3f", addspeed));
+//       }
+//     }
+//   #endif // ACCEL_DEBUG
+//   if (addspeed <= 0) {
+//       return 0;
+//   }
+//   accelspeed = accel_*pm_frametime*wishspeed; // fixed pmove
+//   #if ACCEL_DEBUG
+//     if(verbose && accel_verbose.value){
+//       if (accelspeed > addspeed) {
+//         trap_Print(vaf(", accs = %.3f clip !", accelspeed));
+//       }else{
+//         trap_Print(vaf(", accs = %.3f", accelspeed));
+//       }
+//     }
+//   #endif // ACCEL_DEBUG
+//   if (accelspeed > addspeed) {
+//       accelspeed = addspeed;
+//   }
+
+//   VectorCopy(velocity, velpredict);
+    
+//   for (i=0 ; i<2 ; i++) {
+//     velpredict[i] += accelspeed*wishdir[i];
+//   }
+
+//   vec3_t veltmp;
+//   VectorCopy(velpredict, veltmp);
+
+
+
+//   // add snapping to predict velocity vector
+//   Sys_SnapVector(velpredict);
+  
+//   accelspeed_delta = VectorLength2(velpredict) - VectorLength2(velocity);
+
+//   #if ACCEL_DEBUG
+//     if(verbose && accel_verbose.value){
+//       trap_Print(vaf(", delta = %.5f\n", accelspeed_delta));
+    
+//       trap_Print(vaf("velpredict[0] = %.5f, velpredict[1] = %.5f, velpredict[2] = %.5f\n", velpredict[0], velpredict[1], velpredict[2]));
+//       trap_Print(vaf("veltmp[0] = %.5f, veltmp[1] = %.5f, veltmp[2] = %.5f\n", veltmp[0], veltmp[1], veltmp[2]));
+//     }
+//   #endif //ACCEL_DEBUG
+
+//   return accelspeed_delta;
+// }
+
+
+/*
+==================
+PM_Friction
+
+Handles both ground friction and water friction
+==================
+*/
+// TODO: Write assert to assume 0 <= cT <= 1 // what does cT means ?
+static void PM_Friction(vec3_t velocity_io)
+{
+  // ignore slope movement
+  float const speed = a.pml.walking ? VectorLength2(velocity_io) : VectorLength(velocity_io);
+
+  if (speed < 1)
+  {
+    velocity_io[0] = 0;
+    velocity_io[1] = 0; // allow sinking underwater
+    // FIXME: still have z friction underwater?
+    return;
+  }
+
+  // apply ground friction
+  float drop = 0;
+  if (
+    a.pm.waterlevel <= 1 && a.pml.walking && !(a.pml.groundTrace.surfaceFlags & SURF_SLICK) &&
+    !(a.pm_ps.pm_flags & PMF_TIME_KNOCKBACK))
+  {
+    float const control = speed < pm_stopspeed ? pm_stopspeed : speed;
+    drop += control * pm_friction * pm_frametime;
+  }
+
+  // apply water friction even if just wading
+  if (a.pm.waterlevel)
+  {
+    drop += speed * (a.pm_ps.pm_flags & PMF_PROMODE ? .5f : pm_waterfriction) * a.pm.waterlevel * pm_frametime;
+  }
+
+  // apply flying friction
+  if (a.pm_ps.powerups[PW_FLIGHT])
+  {
+    drop += speed * pm_flightfriction * pm_frametime;
+  }
+
+  // this may cause bug in spectator mode
+  if (a.pm_ps.pm_type == PM_SPECTATOR)
+  {
+    drop += speed * pm_spectatorfriction * pm_frametime;
+  }
+
+  // scale the velocity
+  float newspeed = speed - drop;
+  if (newspeed < 0)
+  {
+    newspeed = 0;
+  }
+  newspeed /= speed;
+
+  for (uint8_t i = 0; i < 3; ++i) velocity_io[i] *= newspeed;
+}
+
+
+// following function is modified version of function taken from: https://github.com/ETrun/ETrun/blob/43b9e18b8b367b2c864bcfa210415372820dd212/src/game/bg_pmove.c#L839
+static void PM_Aircontrol(const vec3_t wishdir, vec3_t velocity_io) {
+	float zspeed, speed, dot, k;
+	int   i;
+
+	// if (!pms.pm.cmd.rightmove || wishspeed == 0.0) {
+	// 	return; 
+	// }
+
+	zspeed              = velocity_io[2];
+	velocity_io[2] = 0;
+	speed               = VectorNormalize(velocity_io);
+
+	dot = DotProduct(velocity_io, wishdir);
+	k   = 32.0f * 150.0f * dot * dot * pm_frametime;
+
+	if (dot > 0) {
+		for (i = 0; i < 2; ++i) {
+			velocity_io[i] = velocity_io[i] * speed + wishdir[i] * k;
+		}
+		VectorNormalize(velocity_io);
+	}
+
+	for (i = 0; i < 2; ++i) {
+		velocity_io[i] *= speed;
+	}
+	velocity_io[2] = zspeed;
+}
+
+
+// following function is taken from: https://github.com/ec-/baseq3a/blob/d851fddadf1c2690ac508b8fc0b18bddba3d93d0/code/game/bg_pmove.c#L129
+/*
+==================
+PM_ClipVelocity
+
+Slide off of the impacting surface
+==================
+*/
+static void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce ) {
+    float	backoff;
+    float	change;
+    int		i;
+    
+    backoff = DotProduct (in, normal);
+    
+    if ( backoff < 0 ) {
+        backoff *= overbounce;
+    } else {
+        backoff /= overbounce;
+    }
+
+    for ( i=0 ; i<3 ; i++ ) {
+        change = normal[i]*backoff;
+        out[i] = in[i] - change;
+    }
+}
+
+
+// the function to calculate delta
+// does not modify a.pm_ps.velocity (not sure anymore since its edited to be used in old version)
 static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, /*vec3_t accel_out,*/ int verbose){
   int			i;
-  float		addspeed, accelspeed, currentspeed, accelspeed_delta;
+  float		addspeed, accelspeed, currentspeed;//, delta;
   vec3_t  velpredict;
-  (void)verbose;
-
   vec3_t velocity;
+
+  (void)verbose;
+  
   VectorCopy(a.pm_ps.velocity, velocity);
 
-  Sys_SnapVector(velocity); // solves bug in spectator mode
+  if(a.pm_ps.pm_type == PM_SPECTATOR){
+    Sys_SnapVector(velocity); // solves bug in spectator mode
+  }
 
-  #if ACCEL_DEBUG
-    if(verbose && accel_verbose.value){
-      trap_Print(vaf("velocity[0] = %.5f, velocity[1] = %.5f, velocity[2] = %.5f\n", velocity[0], velocity[1], velocity[2]));
-    }
-    if(verbose && accel_verbose.value){
-      trap_Print(vaf("wishdir[0] = %.5f, wishdir[1] = %.5f, wishdir[2] = %.5f\n", wishdir[0], wishdir[1], wishdir[2]));
-    }
-  #endif // ACCEL_DEBUG
+  PM_Friction(velocity);
 
   currentspeed = DotProduct (velocity, wishdir); // the velocity speed part regardless the wish direction
-  #if ACCEL_DEBUG
-    if(verbose && accel_verbose.value){
-      trap_Print(vaf("accel_ = %.3f, curs = %.3f, wishs = %.3f", accel_, currentspeed, wishspeed));
-    }
-  #endif // ACCEL_DEBUG
+
   addspeed = wishspeed - currentspeed;
-  #if ACCEL_DEBUG
-    if(verbose && accel_verbose.value){
-      if (addspeed <= 0) {
-        trap_Print(vaf(", adds = %.3f clip !, accs = NaN, delta = NaN\n", addspeed));
-      }else{
-        trap_Print(vaf(", adds = %.3f", addspeed));
-      }
-    }
-  #endif // ACCEL_DEBUG
+
   if (addspeed <= 0) {
-      return 0;
+    // delta_out->combined = 0;
+    // delta_out->forward = 0;
+    // delta_out->side = 0;
+    return 0;
   }
+
   accelspeed = accel_*pm_frametime*wishspeed; // fixed pmove
-  #if ACCEL_DEBUG
-    if(verbose && accel_verbose.value){
-      if (accelspeed > addspeed) {
-        trap_Print(vaf(", accs = %.3f clip !", accelspeed));
-      }else{
-        trap_Print(vaf(", accs = %.3f", accelspeed));
-      }
-    }
-  #endif // ACCEL_DEBUG
   if (accelspeed > addspeed) {
       accelspeed = addspeed;
   }
 
   VectorCopy(velocity, velpredict);
     
-  for (i=0 ; i<2 ; i++) {
+  for (i=0 ; i<3 ; i++) {
     velpredict[i] += accelspeed*wishdir[i];
   }
 
-  vec3_t veltmp;
-  VectorCopy(velpredict, veltmp);
+  // add aircontrol to predict velocity vector
+  if(move_type == MOVE_AIR_CPM && wishspeed && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove) PM_Aircontrol(wishdir, velpredict);
+
+  // clipping
+  if((move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK))
+  {
+    float speed = VectorLength(velpredict);
+
+    PM_ClipVelocity(velpredict, a.pml.groundTrace.plane.normal,
+        velpredict, OVERCLIP );
+        
+    VectorNormalize(velpredict);
+    VectorScale(velpredict, speed, velpredict);
+  }
+  else if((move_type == MOVE_AIR || move_type == MOVE_AIR_CPM)
+      && a.pml.groundPlane)
+  {
+    PM_ClipVelocity(velpredict, a.pml.groundTrace.plane.normal, velpredict, OVERCLIP );
+  }
 
   // add snapping to predict velocity vector
   Sys_SnapVector(velpredict);
   
-  accelspeed_delta = VectorLength2(velpredict) - VectorLength2(velocity);
-
-  #if ACCEL_DEBUG
-    if(verbose && accel_verbose.value){
-      trap_Print(vaf(", delta = %.5f\n", accelspeed_delta));
-    
-      trap_Print(vaf("velpredict[0] = %.5f, velpredict[1] = %.5f, velpredict[2] = %.5f\n", velpredict[0], velpredict[1], velpredict[2]));
-      trap_Print(vaf("veltmp[0] = %.5f, veltmp[1] = %.5f, veltmp[2] = %.5f\n", veltmp[0], veltmp[1], veltmp[2]));
-    }
-  #endif //ACCEL_DEBUG
-
-  return accelspeed_delta;
+  return VectorLength(velpredict) - VectorLength(velocity);
 }
 
 static void rotatePointByAngle(vec_t vec[2], float rad){
@@ -904,36 +1105,55 @@ static void PM_SlickAccelerate(const vec3_t wishdir, float const wishspeed, floa
   PM_Accelerate(wishdir, wishspeed, accel_);
 }
 
-/*
-==================
-PM_ClipVelocity
 
-Slide off of the impacting surface
-==================
-*/
-static void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce ) {
-    float	backoff;
-    float	change;
-    int		i;
-    
-    backoff = DotProduct (in, normal);
-    
-    if ( backoff < 0 ) {
-        backoff *= overbounce;
-    } else {
-        backoff /= overbounce;
-    }
+// * original replaced with reworked version
+// /*
+// ===================
+// PM_AirMove
 
-    for ( i=0 ; i<3 ; i++ ) {
-        change = normal[i]*backoff;
-        out[i] = in[i] - change;
-    }
-}
+// ===================
+// */
+// static void PM_AirMove( void ) {
+//   int			i;
+//   vec3_t		wishvel;
+//   vec3_t		wishdir;
+//   float		wishspeed;
+//   float		scale;
 
+
+//   scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
+//     PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
+//     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
+
+//   // project moves down to flat plane
+//   a.pml.forward[2] = 0;
+//   a.pml.right[2] = 0;
+//   VectorNormalize (a.pml.forward);
+//   VectorNormalize (a.pml.right);
+
+//   for ( i = 0 ; i < 2 ; i++ ) {
+//       wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove;
+//   }
+//   wishvel[2] = 0;
+
+//   VectorCopy (wishvel, wishdir);
+//   wishspeed = VectorNormalize(wishdir);
+//   wishspeed *= scale;
+
+//   // not on ground, so little effect on velocity
+//   if ((a.pm_ps.pm_flags & PMF_PROMODE) && (accel_trueness.integer & ACCEL_TN_CPM) && (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove))
+//   {
+//     PM_Accelerate(wishdir, wishspeed > cpm_airwishspeed ? cpm_airwishspeed : wishspeed, cpm_airstrafeaccelerate);
+//   }
+//   else
+//   {
+//     PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
+//   }
+// }
 
 /*
 ===================
-PM_AirMove
+PAL_AirMove
 
 ===================
 */
@@ -965,102 +1185,210 @@ static void PM_AirMove( void ) {
   wishspeed *= scale;
 
   // not on ground, so little effect on velocity
-  if ((a.pm_ps.pm_flags & PMF_PROMODE) && (accel_trueness.integer & ACCEL_TN_CPM) && (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove))
+  if (a.pm_ps.pm_flags & PMF_PROMODE && accel_trueness.integer & ACCEL_TN_CPM) //  && (!pms.pm.cmd.forwardmove && pms.pm.cmd.rightmove) => there is also forward move
   {
-    PM_Accelerate(wishdir, wishspeed > cpm_airwishspeed ? cpm_airwishspeed : wishspeed, cpm_airstrafeaccelerate);
+    move_type = MOVE_AIR_CPM;
+    PM_Accelerate(wishdir,
+        (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove && wishspeed > cpm_airwishspeed ?
+        cpm_airwishspeed : wishspeed),
+        (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove ? cpm_airstrafeaccelerate :
+        (DotProduct(a.pm_ps.velocity, wishdir) < 0 ? 2.5f : pm_airaccelerate)));
   }
   else
   {
+    move_type = MOVE_AIR;
     PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
   }
 }
+
+// * original replaced with reworked version
+// /*
+// ===================
+// PM_WalkMove
+
+// ===================
+// */
+// static void PM_WalkMove( void ) {
+//     int			i;
+//     vec3_t		wishvel;
+//     vec3_t		wishdir;
+//     float		wishspeed;
+//     float		scale;
+
+//     if ( a.pm.waterlevel > 2 && DotProduct( a.pml.forward, a.pml.groundTrace.plane.normal ) > 0 ) {
+//         // begin swimming
+//         // PM_WaterMove();
+//         return;
+//     }
+
+//     if (PM_CheckJump(&a.pm, &a.pm_ps, &a.pml)) {
+//         // jumped away
+//         if ( a.pm.waterlevel > 1 ) {
+//             //PM_WaterMove();
+//         } else {
+//             PM_AirMove();
+//         }
+//         return;
+//     }
+
+//     scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
+//     PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
+//     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
+
+//     // project moves down to flat plane
+//     a.pml.forward[2] = 0;
+//     a.pml.right[2] = 0;
+
+//     // project the forward and right directions onto the ground plane
+//     PM_ClipVelocity (a.pml.forward, a.pml.groundTrace.plane.normal, a.pml.forward, OVERCLIP );
+//     PM_ClipVelocity (a.pml.right, a.pml.groundTrace.plane.normal, a.pml.right, OVERCLIP );
+//     //
+//     VectorNormalize (a.pml.forward); // exactly 1 unit in space facing forward based on cameraview
+//     VectorNormalize (a.pml.right); // exactly 1 unit in space facing right based on cameraview
+
+//     for ( i = 0 ; i < 2 ; i++ ) {
+//         wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove; // added fractions of direction (the camera once) increased over move (127 run speed)
+//     }
+//     // when going up or down slopes the wish velocity should Not be zero // but its value doesnt come from anywhere here so wtf...
+//     wishvel[2] = 0;
+
+//     VectorCopy (wishvel, wishdir);
+//     wishspeed = VectorNormalize(wishdir); 
+//     wishspeed *= scale;
+
+//     // clamp the speed lower if ducking
+//     if ( a.pm_ps.pm_flags & PMF_DUCKED ) {
+//         if ( wishspeed > a.pm_ps.speed * pm_duckScale ) {
+//             wishspeed = a.pm_ps.speed * pm_duckScale;
+//         }
+//     }
+
+//     // clamp the speed lower if wading or walking on the bottom
+//     if ( a.pm.waterlevel ) {
+//         float	waterScale;
+
+//         waterScale = a.pm.waterlevel / 3.0f;
+//         waterScale = 1.0f - ( 1.0f - pm_swimScale ) * waterScale;
+//         if ( wishspeed > a.pm_ps.speed * waterScale ) {
+//             wishspeed = a.pm_ps.speed * waterScale;
+//         }
+//     }
+
+//   //when a player gets hit, they temporarily lose
+//   // full control, which allows them to be moved a bit
+//   if (accel_trueness.integer & ACCEL_TN_GROUND)
+//   {
+//     if (a.pml.groundTrace.surfaceFlags & SURF_SLICK || a.pm_ps.pm_flags & PMF_TIME_KNOCKBACK)
+//     {
+//       PM_SlickAccelerate(wishdir, wishspeed, a.pm_ps.pm_flags & PMF_PROMODE ? cpm_slickaccelerate : pm_slickaccelerate);
+//     }
+//     else
+//     {
+//       // don't reset the z velocity for slopes
+//       // s.pm_ps.velocity[2] = 0;
+//       PM_Accelerate(wishdir, wishspeed, a.pm_ps.pm_flags & PMF_PROMODE ? cpm_accelerate : pm_accelerate);
+//     }
+//   }
+//   else
+//   {
+//     PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
+//   }
+// }
 
 
 
 /*
 ===================
-PM_WalkMove
+PAL_WalkMove
 
 ===================
 */
 static void PM_WalkMove( void ) {
-    int			i;
-    vec3_t		wishvel;
-    vec3_t		wishdir;
-    float		wishspeed;
-    float		scale;
+  int			i;
+  vec3_t		wishvel;
+  vec3_t		wishdir;
+  float		wishspeed;
+  float		scale;
 
-    if ( a.pm.waterlevel > 2 && DotProduct( a.pml.forward, a.pml.groundTrace.plane.normal ) > 0 ) {
-        // begin swimming
-        // PM_WaterMove();
-        return;
+  if ( a.pm.waterlevel > 2 && DotProduct( a.pml.forward, a.pml.groundTrace.plane.normal ) > 0 ) {
+    // begin swimming
+    // PAL_WaterMove();
+    return;
+  }
+
+  if (PM_CheckJump(&a.pm, &a.pm_ps, &a.pml)) {
+    // jumped away
+    if ( a.pm.waterlevel > 1 ) {
+        //PAL_WaterMove();
+    } else {
+        PM_AirMove();
+    }
+    return;
+  }
+
+  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
+  PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
+  PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
+
+  // project moves down to flat plane
+  a.pml.forward[2] = 0;
+  a.pml.right[2] = 0;
+
+  // project the forward and right directions onto the ground plane
+  PM_ClipVelocity (a.pml.forward, a.pml.groundTrace.plane.normal, a.pml.forward, OVERCLIP );
+  PM_ClipVelocity (a.pml.right, a.pml.groundTrace.plane.normal, a.pml.right, OVERCLIP );
+  //
+  VectorNormalize (a.pml.forward); // aprox. 1 unit in space facing forward based on cameraview
+  VectorNormalize (a.pml.right); // aprox. 1 unit in space facing right based on cameraview
+
+  for ( i = 0 ; i < 2 ; i++ ) {
+    wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove; // added fractions of direction (the camera once) increased over move (127 run speed)
+  }
+  // when going up or down slopes the wish velocity should Not be zero // but its value doesnt come from anywhere here so wtf...
+  wishvel[2] = 0;
+
+  VectorCopy (wishvel, wishdir);
+  wishspeed = VectorNormalize(wishdir); 
+  wishspeed *= scale;
+
+  // clamp the speed lower if ducking
+  if ( a.pm_ps.pm_flags & PMF_DUCKED ) {
+    if ( wishspeed > a.pm_ps.speed * pm_duckScale ) {
+      wishspeed = a.pm_ps.speed * pm_duckScale;
+    }
+  }
+
+  // clamp the speed lower if wading or walking on the bottom
+  if(a.pm.waterlevel)
+  {
+    float	waterScale = a.pm.waterlevel / 3.0f;
+    if(a.pm_ps.pm_flags & PMF_PROMODE)
+    {
+      waterScale = 1.0 - (1.0 - (a.pm.waterlevel == 1 ? 0.585 : 0.54)) * waterScale;
+    }
+    else {
+      waterScale = 1.0f - ( 1.0f - pm_swimScale ) * waterScale;
     }
 
-    if (PM_CheckJump(&a.pm, &a.pm_ps, &a.pml)) {
-        // jumped away
-        if ( a.pm.waterlevel > 1 ) {
-            //PM_WaterMove();
-        } else {
-            PM_AirMove();
-        }
-        return;
+    if ( wishspeed > a.pm_ps.speed * waterScale ) {
+      wishspeed = a.pm_ps.speed * waterScale;
     }
-
-    scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
-    PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
-    PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
-
-    // project moves down to flat plane
-    a.pml.forward[2] = 0;
-    a.pml.right[2] = 0;
-
-    // project the forward and right directions onto the ground plane
-    PM_ClipVelocity (a.pml.forward, a.pml.groundTrace.plane.normal, a.pml.forward, OVERCLIP );
-    PM_ClipVelocity (a.pml.right, a.pml.groundTrace.plane.normal, a.pml.right, OVERCLIP );
-    //
-    VectorNormalize (a.pml.forward); // exactly 1 unit in space facing forward based on cameraview
-    VectorNormalize (a.pml.right); // exactly 1 unit in space facing right based on cameraview
-
-    for ( i = 0 ; i < 2 ; i++ ) {
-        wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove; // added fractions of direction (the camera once) increased over move (127 run speed)
-    }
-    // when going up or down slopes the wish velocity should Not be zero // but its value doesnt come from anywhere here so wtf...
-    wishvel[2] = 0;
-
-    VectorCopy (wishvel, wishdir);
-    wishspeed = VectorNormalize(wishdir); 
-    wishspeed *= scale;
-
-    // clamp the speed lower if ducking
-    if ( a.pm_ps.pm_flags & PMF_DUCKED ) {
-        if ( wishspeed > a.pm_ps.speed * pm_duckScale ) {
-            wishspeed = a.pm_ps.speed * pm_duckScale;
-        }
-    }
-
-    // clamp the speed lower if wading or walking on the bottom
-    if ( a.pm.waterlevel ) {
-        float	waterScale;
-
-        waterScale = a.pm.waterlevel / 3.0f;
-        waterScale = 1.0f - ( 1.0f - pm_swimScale ) * waterScale;
-        if ( wishspeed > a.pm_ps.speed * waterScale ) {
-            wishspeed = a.pm_ps.speed * waterScale;
-        }
-    }
+  }
 
   //when a player gets hit, they temporarily lose
   // full control, which allows them to be moved a bit
+  move_type = MOVE_WALK;
   if (accel_trueness.integer & ACCEL_TN_GROUND)
   {
     if (a.pml.groundTrace.surfaceFlags & SURF_SLICK || a.pm_ps.pm_flags & PMF_TIME_KNOCKBACK)
     {
+      move_type = MOVE_WALK_SLICK;
       PM_SlickAccelerate(wishdir, wishspeed, a.pm_ps.pm_flags & PMF_PROMODE ? cpm_slickaccelerate : pm_slickaccelerate);
     }
     else
     {
       // don't reset the z velocity for slopes
-      // s.pm_ps.velocity[2] = 0;
+      // a.pm_ps.velocity[2] = 0;
       PM_Accelerate(wishdir, wishspeed, a.pm_ps.pm_flags & PMF_PROMODE ? cpm_accelerate : pm_accelerate);
     }
   }
@@ -1069,4 +1397,3 @@ static void PM_WalkMove( void ) {
     PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
   }
 }
-
