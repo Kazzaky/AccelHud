@@ -11,6 +11,8 @@
 
 #include "cg_accel.h"
 
+#include "accel_version.h"
+
 #include "bg_pmove.h"
 #include "cg_cvar.h"
 #include "cg_local.h"
@@ -64,6 +66,7 @@ static vmCvar_t accel_mode_neg;
 
 static vmCvar_t accel_vline;
 
+static vmCvar_t version;
 
 
 #if ACCEL_DEBUG
@@ -157,6 +160,8 @@ static cvarTable_t accel_cvars[] = {
 
 #define ACCEL_VL_USER_COLOR   1 // line have user defined color, if this is not set the colors are pos/neg
 #define ACCEL_VL_LINE_H       2 // include bar height
+
+  { &version, "p_accel_version", ACCEL_VERSION, CVAR_USERINFO | CVAR_INIT },
 
   #if ACCEL_DEBUG
     { &accel_verbose, "p_accel_verbose", "0", CVAR_ARCHIVE_ND },
@@ -883,10 +888,14 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         VectorCopy(wishdir, wishdir_rotated);
         rotatePointByAngle(wishdir_rotated, angle_yaw_relative);
 
-        // special case
-        if (move_type == MOVE_AIR_CPM && !(!a.pm.cmd.forwardmove && a.pm.cmd.rightmove) && DotProduct(a.pm_ps.velocity, wishdir_rotated) < 0)
+        // special case wishdir related values need to be recalculated (accel)
+        if (move_type == MOVE_AIR_CPM && (!a.pm.cmd.rightmove || a.pm.cmd.forwardmove))
         {
-          speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, 2.5f, 0);
+          if(DotProduct(a.pm_ps.velocity, wishdir_rotated) < 0){
+            speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, 2.5f, 0);
+          }else{
+            speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, pm_airaccelerate, 0);
+          }
         }
         else
         {

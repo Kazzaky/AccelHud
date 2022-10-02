@@ -1,0 +1,6 @@
+#ifndef ACCEL_VERSION_H
+#define ACCEL_VERSION_H
+
+#define ACCEL_VERSION "@ACCEL_VERSION@"
+
+#endif // ACCEL_VERSION_H
