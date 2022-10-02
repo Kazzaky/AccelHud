@@ -855,12 +855,17 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   // theoretical maximum is: addspeed * sin(45) * 2, but in practice its way less
   // hardcoded for now
   // inacurate approximation
+  // normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -1*0.00025f*VectorLength2(a.pm_ps.velocity)+1.75f);
+  // if(a.pml.walking){
+  //   normalizer *= 15.f;// 38.4f * 1.41421356237f;
+  // }
+  // else if (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove && accel_trueness.integer & ACCEL_TN_CPM && a.pm_ps.pm_flags & PMF_PROMODE){
+  //   normalizer *= 11.72f; // 30.f * 1.41421356237f;
+  // }
+  // * replaced with reworked version:
   normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -1*0.00025f*VectorLength2(a.pm_ps.velocity)+1.75f);
-  if(a.pml.walking){
+  if(move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK){
     normalizer *= 15.f;// 38.4f * 1.41421356237f;
-  }
-  else if (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove && accel_trueness.integer & ACCEL_TN_CPM && a.pm_ps.pm_flags & PMF_PROMODE){
-    normalizer *= 11.72f; // 30.f * 1.41421356237f;
   }
 
   if(!velocity_unchanged){
