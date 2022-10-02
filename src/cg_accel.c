@@ -761,9 +761,7 @@ static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float 
   
   VectorCopy(a.pm_ps.velocity, velocity);
 
-  if(a.pm_ps.pm_type == PM_SPECTATOR){
-    Sys_SnapVector(velocity); // solves bug in spectator mode
-  }
+  Sys_SnapVector(velocity); // solves bug in spectator mode
 
   PM_Friction(velocity);
 
