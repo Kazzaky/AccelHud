@@ -258,6 +258,7 @@ void init_accel(void)
   //init_help(accel_help, ARRAY_LEN(accel_help));
 }
 
+
 void update_accel(void)
 {
   update_cvars(accel_cvars, ARRAY_LEN(accel_cvars));
@@ -509,9 +510,46 @@ static void set_color_inc_pred(int regular)
   }
 }
 
+inline static void add_projection_x(float *x, float *w)
+{
+  if(mdd_projection.integer == 1) return;
+
+  const float half_fov_x = cg.refdef.fov_x / 2;
+  const float half_screen_width = cgs.glconfig.vidWidth / 2.f;
+
+  float angle;
+  float proj_x, proj_w;
+
+  switch(mdd_projection.integer){
+    case 0:
+      angle = (*x / half_screen_width - 1) * half_fov_x;
+      proj_x = half_screen_width * (1 + tanf(angle) / tanf(half_fov_x));
+      angle = ((*x + *w) / half_screen_width - 1) * half_fov_x;
+      proj_w = (half_screen_width * (1 + tanf(angle) / tanf(half_fov_x))) - proj_x;
+      break;
+    // case 1:
+    //   angle = (*x / half_screen_width - 1) * half_fov_x;
+    //   proj_x = half_screen_width * (1 + angle / half_fov_x);
+    //   angle = ((*x + *w) / half_screen_width - 1) * half_fov_x;
+    //   proj_w = (half_screen_width * (1 + angle / half_fov_x)) - proj_x;
+    //   break;
+    case 2:
+      angle = (*x / half_screen_width - 1) * half_fov_x;
+      proj_x = half_screen_width * (1 + tanf(angle / 2) / tanf(half_fov_x / 2));
+      angle = ((*x + *w) / half_screen_width - 1) * half_fov_x;
+      proj_w = (half_screen_width * (1 + tanf(angle / 2) / tanf(half_fov_x / 2))) - proj_x;
+      break;
+  }
+
+  *x = proj_x;
+  *w = proj_w;
+}
+
 // does not set color
 inline static void draw_positive(float x, float y, float w, float h)
 {
+  add_projection_x(&x, &w);
+
   if(predict){
     trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2 - predict_offset_scaled, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
   }
@@ -523,6 +561,8 @@ inline static void draw_positive(float x, float y, float w, float h)
 // does not set color
 inline static void draw_negative(float x, float y, float w, float h)
 {
+  add_projection_x(&x, &w);
+
   trap_R_DrawStretchPic(x, (y - h) + zero_gap_scaled / 2, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 

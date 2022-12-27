@@ -10,8 +10,8 @@ Please note that the AccelHud is currently only pre-alpha version, might be bugg
 
 |            | **Windows** | **Linux** | **macOS** |
 | :--------: | :---------: | :-------: | :-------: |
-| **32-bit** | [cgamex86.dll](../../releases/download/v0.0.6/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.0.6/cgamei386.so) |
-| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.0.6/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.0.6/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.0.6/cgamex86_64.dylib) |
+| **32-bit** | [cgamex86.dll](../../releases/download/v0.0.7/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.0.7/cgamei386.so) |
+| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.0.7/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.0.7/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.0.7/cgamex86_64.dylib) |
 
 ## Build / Instalation
 
@@ -50,6 +50,21 @@ xX - include line graph height for vertical lines height
 0 - disable negative acceleration\
 1 - enable negative acceleration\
 2 - show only adjecent negative acceleration
+
+## Huds draw order
+
+Each cvar use value between 0-7, in case same value is set the default order is used.
+
+`p_compass_draw_order X`\
+`p_cgaz_draw_order X`\
+`p_snap_draw_order X`\
+`p_pitch_draw_order X`\
+`p_ammo_draw_order X`\
+`p_jump_draw_order X`\
+`p_timer_draw_order X`\
+`p_accel_draw_order X`
+
+For example if you want to draw snap hud on top of accel hud, just make sure the `p_snap_draw_order` have greater value then `p_accel_draw_order`.
 
 ### Proportions:
 `p_accel_yh X X`\
