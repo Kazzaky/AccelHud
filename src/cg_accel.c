@@ -75,7 +75,7 @@ static vmCvar_t version;
 
 
 static cvarTable_t accel_cvars[] = {
-  { &accel, "p_accel", "0b00000000", CVAR_ARCHIVE_ND },
+  { &accel, "p_accel", "0b000000000", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_DISABLED            0
 #define ACCEL_ENABLE              1 // the basic view
@@ -86,6 +86,7 @@ static cvarTable_t accel_cvars[] = {
 #define ACCEL_PL_ACTIVE           32 // point line active
 #define ACCEL_CB_ACTIVE           64 // condensed bar active
 #define ACCEL_UNIFORM_VALUE       128 // uniform values
+#define ACCEL_HL_G_ADJ            256 // highlight greater adjecent
 
 
   { &accel_trueness, "p_accel_trueness", "0b0000", CVAR_ARCHIVE_ND },
@@ -110,7 +111,9 @@ static cvarTable_t accel_cvars[] = {
   { &accel_line_hl_neg_rgba, "p_accel_line_hl_neg_rgba", "1 .6 .6 .9", CVAR_ARCHIVE_ND },
   { &accel_vline_rgba, "p_accel_vline_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
   { &accel_zero_rgba, "p_accel_zero_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
-  
+  { &accel_hl_neg_rgba, "p_accel_hl_g_adj_rgba", ".1 .9 .9 .9", CVAR_ARCHIVE_ND },
+  { &accel_hl_neg_rgba, "p_accel_line_hl_g_adj_rgba", ".4 .9 .9 .9", CVAR_ARCHIVE_ND },
+
   { &accel_predict_strafe_rgba, "p_accel_p_strafe_rgbam", "-.2 -.1 .4 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_sidemove_rgba, "p_accel_p_sm_rgbam", ".4 -.1 -.2 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 .-8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
@@ -180,6 +183,8 @@ enum {
   RGBA_I_BORDER_HL_NEG,
   RGBA_I_VLINE,
   RGBA_I_ZERO,
+  RGBA_I_HL_G_ADJ,
+  RGBA_I_BORDER_HL_G_ADJ,
   RGBA_I_PREDICT_WAD,
   RGBA_I_PREDICT_AD,
   RGBA_I_PREDICT_OPPOSITE,
@@ -877,8 +882,8 @@ Handles user intended acceleration
 */
 static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_)
 {
-  int i, j, i_color, negative_draw_skip;
-  float y, dist_to_zero, dist_to_adj, height, line_height, speed_delta, cur_speed_delta = 0, angle_yaw_relative, normalizer;
+  int i, j, i_color, negative_draw_skip, center_bar_index = 0;
+  float y, dist_to_zero, dist_to_adj, height, line_height, speed_delta, /*cur_speed_delta = 0,*/ angle_yaw_relative, normalizer;
   vec3_t wishdir_rotated;
   graph_bar *bar, *bar_adj;
 
@@ -920,7 +925,14 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     {
       if(i == center){
         // the current (where the cursor points to)
-        cur_speed_delta = speed_delta = calc_accelspeed(wishdir, wishspeed, accel_, 1);
+        /*cur_speed_delta = */
+        speed_delta = calc_accelspeed(wishdir, wishspeed, accel_, 1);
+
+        if(accel_graph_size && accel_graph[accel_graph_size-1].value == speed_delta){
+          center_bar_index = accel_graph_size - 1;
+        }else{
+          center_bar_index = accel_graph_size;
+        }
       }
       else{
         // rotating wishdir vector along whole x axis
@@ -966,6 +978,19 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     }
 
   }
+
+  int hightlight_swap = 0;
+  if(accel.integer & ACCEL_HL_G_ADJ
+    && (
+        // relevant moves -> VQ3 strafe or sidemove, CMP only strafe
+        (!(a.pm_ps.pm_flags & PMF_PROMODE) && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
+        ||
+        (a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
+    )
+  ){
+    hightlight_swap = a.pm.cmd.rightmove > 0 ? 1 : -1;
+  } 
+
   
   // actual drawing si done here, for each bar in graph
   for(i = 0; i < accel_graph_size; ++i)
@@ -976,11 +1001,21 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     {
       // bar's drawing
       if(bar->polarity > 0){ // positive bar
-        if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
+        
+        if(accel.integer & ACCEL_HL_ACTIVE && i == center_bar_index){//->value == cur_speed_delta){
           set_color_inc_pred(RGBA_I_HL_POS);
           i_color = RGBA_I_BORDER_HL_POS;
         }
-        else {
+        // is swap highlight active and the current bar is the swap-to once 
+        else if(hightlight_swap && (i == center_bar_index + hightlight_swap || i == center_bar_index - hightlight_swap)
+          // and the value is greater then current
+          && bar->value > accel_graph[center_bar_index].value
+        ){
+          set_color_inc_pred(RGBA_I_HL_G_ADJ);
+          i_color = RGBA_I_BORDER_HL_G_ADJ;
+        }
+        else
+        {
           set_color_inc_pred(RGBA_I_POS);
           i_color = RGBA_I_BORDER;
         }
@@ -1029,7 +1064,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           continue;
         }
 
-        if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta)
+        if(accel.integer & ACCEL_HL_ACTIVE && i == center_bar_index)
         {
           set_color_inc_pred(RGBA_I_HL_NEG);
           i_color = RGBA_I_BORDER_HL_NEG;
@@ -1115,14 +1150,14 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     {
       bar = &(accel_graph[i]);
       if(bar->polarity > 0){
-        if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
+        if(accel.integer & ACCEL_HL_ACTIVE && i == center_bar_index){
           i_color = RGBA_I_HL_POS;
         }else {
           i_color = RGBA_I_POS;
         }
       }
       else if(bar->polarity < 0){
-        if(accel.integer & ACCEL_HL_ACTIVE && bar->value == cur_speed_delta){
+        if(accel.integer & ACCEL_HL_ACTIVE && i == center_bar_index){
           i_color = RGBA_I_HL_NEG;
         }
         else {
@@ -1146,12 +1181,12 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   {
     set_color_inc_pred(RGBA_I_POINT);
 
-    y = ypos_scaled + hud_height_scaled * (cur_speed_delta / normalizer) * -1;
-    if(cur_speed_delta > 0){
+    y = ypos_scaled + hud_height_scaled * (accel_graph[center_bar_index].value / normalizer) * -1;
+    if(accel_graph[center_bar_index].value > 0){
       //trap_R_DrawStretchPic(center - (1 * cgs.screenXScale) / 2, y, 1 * cgs.screenXScale, ypos_scaled - y, 0, 0, 0, 0, cgs.media.whiteShader);
       draw_positive(center - (1 * cgs.screenXScale) / 2, y, 1 * cgs.screenXScale, ypos_scaled - y);
     }
-    else if(cur_speed_delta < 0){
+    else if(accel_graph[center_bar_index].value < 0){
       //trap_R_DrawStretchPic(center - (1 * cgs.screenXScale) / 2, ypos_scaled + accel_zero_size.value * cgs.screenXScale, 1 * cgs.screenXScale, (y - ypos_scaled) + accel_zero_size.value  * cgs.screenXScale, 0, 0, 0, 0, cgs.media.whiteShader);
       draw_negative(center - (1 * cgs.screenXScale) / 2, y, 1 * cgs.screenXScale, y - ypos_scaled);
     }
