@@ -152,8 +152,8 @@ jobs:
       run: |
         # see https://github.com/actions/virtual-environments/blob/main/images/macos/macos-11-Readme.md#language-and-runtime
         # clang 13.0.0 hangs while building cg_vm.c (related to branching macro UOP()) => use clang 13.0.1 or higher
-        echo "::set-output name=c_compiler::$(brew --prefix llvm@14)/bin/${{ matrix.c }}"
-        echo "::set-output name=cxx_compiler::$(brew --prefix llvm@14)/bin/${{ matrix.cxx }}"
+        echo "::set-output name=c_compiler::$(brew --prefix llvm)/bin/${{ matrix.c }}"
+        echo "::set-output name=cxx_compiler::$(brew --prefix llvm)/bin/${{ matrix.cxx }}"
         echo "::set-output name=objcopy::$(brew --prefix binutils)/bin/objcopy"
 
     - uses: actions/checkout@v3
