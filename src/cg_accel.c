@@ -50,17 +50,20 @@ static vmCvar_t accel_zero_rgba;
 static vmCvar_t accel_predict_strafe_rgba;
 static vmCvar_t accel_predict_sidemove_rgba;
 static vmCvar_t accel_predict_opposite_rgba;
+static vmCvar_t accel_predict_crouchjump_rgba;
 
 static vmCvar_t accel_line_size;
 static vmCvar_t accel_vline_size;
 static vmCvar_t accel_condensed_size;
 static vmCvar_t accel_predict_offset;
+static vmCvar_t accel_predict_crouchjump_offset;
 
 static vmCvar_t accel_sidemove;
 static vmCvar_t accel_forward;
 static vmCvar_t accel_nokey;
 static vmCvar_t accel_strafe;
 static vmCvar_t accel_opposite;
+static vmCvar_t accel_crouchjump;
 
 static vmCvar_t accel_mode_neg;
 
@@ -117,11 +120,13 @@ static cvarTable_t accel_cvars[] = {
   { &accel_predict_strafe_rgba, "p_accel_p_strafe_rgbam", "-.2 -.1 .4 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_sidemove_rgba, "p_accel_p_sm_rgbam", ".4 -.1 -.2 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 .-8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
+  { &accel_predict_crouchjump_rgba, "p_accel_p_cj_rgbam", "-.2 -.2 .6 0", CVAR_ARCHIVE_ND },
   
   { &accel_line_size, "p_accel_line_size", "5", CVAR_ARCHIVE_ND },
   { &accel_vline_size, "p_accel_vline_size", "1", CVAR_ARCHIVE_ND },
   { &accel_condensed_size, "p_accel_cond_size", "3", CVAR_ARCHIVE_ND },
   { &accel_predict_offset, "p_accel_p_offset", "30", CVAR_ARCHIVE_ND },
+  { &accel_predict_crouchjump_offset, "p_accel_p_cj_offset", "0", CVAR_ARCHIVE_ND },
 
   { &accel_sidemove, "p_accel_p_sm", "0", CVAR_ARCHIVE_ND },
 
@@ -149,6 +154,10 @@ static cvarTable_t accel_cvars[] = {
   { &accel_opposite, "p_accel_p_opposite", "0", CVAR_ARCHIVE_ND },
 
 #define ACCEL_OPPOSITE_PREDICT       2 // just to make it corelate with other keys
+
+  { &accel_crouchjump, "p_accel_p_cj", "0", CVAR_ARCHIVE_ND },
+
+#define ACCEL_CROUCH_PREDICT       2 // just to make it corelate with other keys
 
 
 
@@ -188,6 +197,7 @@ enum {
   RGBA_I_PREDICT_WAD,
   RGBA_I_PREDICT_AD,
   RGBA_I_PREDICT_OPPOSITE,
+  RGBA_I_PREDICT_CROUCHJUMP,
   RGBA_I_LENGTH
 };
 
@@ -198,7 +208,8 @@ enum {
   PREDICT_FMNK_SM,
   PREDICT_STRAFE_SM,
   PREDICT_SM_STRAFE_ADD, // lets keep this for now
-  PREDICT_OPPOSITE
+  PREDICT_OPPOSITE,
+  PREDICT_CROUCHJUMP
 };
 
 enum {
@@ -223,7 +234,7 @@ typedef struct {
 
 #define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded
 
-static graph_bar accel_graph[GRAPH_MAX_RESOLUTION*4]; // regular + prediction other + prediction left + prediction right, i know its insane but for the sake to not overflow 
+static graph_bar accel_graph[GRAPH_MAX_RESOLUTION*5]; // regular + prediction other + prediction left + prediction right + prediction crouch, i know its insane but for the sake to not overflow 
 static int accel_graph_size;
 
 static int resolution;
@@ -235,6 +246,7 @@ static float zero_gap_scaled;
 static float line_size_scaled;
 static float vline_size_scaled;
 static float predict_offset_scaled;
+static float predict_crouchjump_offset_scaled;
 
 static vec4_t color_tmp;
 
@@ -387,12 +399,14 @@ static void PmoveSingle(void)
   line_size_scaled = accel_line_size.value * cgs.screenXScale;
   vline_size_scaled = accel_vline_size.value * cgs.screenXScale;
   predict_offset_scaled = accel_predict_offset.value * cgs.screenXScale;
+  predict_crouchjump_offset_scaled = accel_predict_crouchjump_offset.value * cgs.screenXScale;
 
   predict = 0;
   order = 0; // intentionally here in case we predict both sides to prevent the rare case of adjecent false positive
 
   signed char key_forwardmove = a.pm.cmd.forwardmove,
-      key_rightmove = a.pm.cmd.rightmove;
+      key_rightmove = a.pm.cmd.rightmove,
+      key_upmove = a.pm.cmd.upmove;
 
   // predictions (simulate strafe or a/d)
   if((a.pm_ps.pm_flags & PMF_PROMODE) && accel_sidemove.value == ACCEL_AD_PREDICT && !key_forwardmove && key_rightmove){
@@ -456,14 +470,14 @@ static void PmoveSingle(void)
     // a/d oposite only for vq3
     if(!(a.pm_ps.pm_flags & PMF_PROMODE) && !key_forwardmove && key_rightmove){
       predict = PREDICT_OPPOSITE;
-      a.pm.cmd.forwardmove = 0;
+      a.pm.cmd.forwardmove = 0; // why not key_forwardmove here ?
       a.pm.cmd.rightmove = key_rightmove * -1;
       move();
     }
 
     if(key_forwardmove && key_rightmove){
       predict = PREDICT_OPPOSITE;
-      a.pm.cmd.forwardmove = scale;
+      a.pm.cmd.forwardmove = scale; // why not key_forwardmove here ?
       a.pm.cmd.rightmove = key_rightmove * -1;
       move();
     }
@@ -472,6 +486,7 @@ static void PmoveSingle(void)
   // restore original keys
   a.pm.cmd.forwardmove = key_forwardmove;
   a.pm.cmd.rightmove   = key_rightmove;
+  a.pm.cmd.upmove      = key_upmove;
 
   // reset predict
   predict = PREDICT_NONE;
@@ -485,6 +500,27 @@ static void PmoveSingle(void)
 
   // regular move
   move();
+
+  // predict same move while jumping / crouching // intentionally last to overdraw regular move
+  if(accel_crouchjump.value == ACCEL_CROUCH_PREDICT)
+  {
+    // a/d only for vq3
+    if(!(a.pm_ps.pm_flags & PMF_PROMODE) && !key_forwardmove && key_rightmove){
+      predict = PREDICT_CROUCHJUMP;
+      a.pm.cmd.forwardmove = key_forwardmove;
+      a.pm.cmd.rightmove = key_rightmove;
+      a.pm.cmd.upmove = scale;
+      move();
+    }
+
+    if(key_forwardmove && key_rightmove){
+      predict = PREDICT_CROUCHJUMP;
+      a.pm.cmd.forwardmove = key_forwardmove;
+      a.pm.cmd.rightmove = key_rightmove;
+      a.pm.cmd.upmove = scale;
+      move();
+    }
+  }
 }
 
 static void set_color_inc_pred(int regular)
@@ -505,6 +541,11 @@ static void set_color_inc_pred(int regular)
     case PREDICT_FMNK_SM:
     case PREDICT_STRAFE_SM:{
       ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_AD], color_tmp);
+      trap_R_SetColor(color_tmp);
+      break;
+    }
+    case PREDICT_CROUCHJUMP:{
+      ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_CROUCHJUMP], color_tmp);
       trap_R_SetColor(color_tmp);
       break;
     }
@@ -556,7 +597,7 @@ inline static void draw_positive(float x, float y, float w, float h)
   add_projection_x(&x, &w);
 
   if(predict){
-    trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2 - predict_offset_scaled, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+    trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2 - (predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled), w, h, 0, 0, 0, 0, cgs.media.whiteShader);
   }
   else {
     trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
@@ -1261,7 +1302,7 @@ static void PM_AirMove( void ) {
   float		scale;
 
 
-  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
+  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_CROUCHJUMP ?
     PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
 
@@ -1422,7 +1463,7 @@ static void PM_WalkMove( void ) {
     return;
   }
 
-  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
+  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_CROUCHJUMP ?
   PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
   PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
 

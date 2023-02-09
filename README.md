@@ -10,8 +10,8 @@ Please note that the AccelHud is currently only pre-alpha version, might be bugg
 
 |            | **Windows** | **Linux** | **macOS** |
 | :--------: | :---------: | :-------: | :-------: |
-| **32-bit** | [cgamex86.dll](../../releases/download/v0.0.7/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.0.7/cgamei386.so) |
-| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.0.7/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.0.7/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.0.7/cgamex86_64.dylib) |
+| **32-bit** | [cgamex86.dll](../../releases/download/v0.0.8/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.0.8/cgamei386.so) |
+| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.0.8/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.0.8/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.0.8/cgamex86_64.dylib) |
 
 ## Build / Instalation
 
@@ -23,15 +23,16 @@ Only gcc and clang compilers are supported.
 
 ## Configuration options
 
-`p_accel 0bXXXXXXXX`\
-Xxxxxxxx - uniform acceleration value\
-xXxxxxxx - draw condensed acceleration line\
-xxXxxxxx - draw current acceleration line\
-xxxXxxxx - draw vertical lines\
-xxxxXxxx - disable drawing bars\
-xxxxxXxx - draw line graph\
-xxxxxxXx - highlight active zone\
-xxxxxxxX - draw basic hud
+`p_accel 0bXXXXXXXXX`\
+Xxxxxxxxx - highlight greater adjecent zone\
+xXxxxxxxx - uniform acceleration value\
+xxXxxxxxx - draw condensed acceleration line\
+xxxXxxxxx - draw current acceleration line\
+xxxxXxxxx - draw vertical lines\
+xxxxxXxxx - disable drawing bars\
+xxxxxxXxx - draw line graph\
+xxxxxxxXx - highlight active zone\
+xxxxxxxxX - draw basic hud
 
 `p_accel_trueness 0bXXXX`\
 Xxxx - disable dynamic acceleration value correction\
@@ -51,21 +52,6 @@ xX - include line graph height for vertical lines height
 1 - enable negative acceleration\
 2 - show only adjecent negative acceleration
 
-## Huds draw order
-
-Each cvar use value between 0-7, in case same value is set the default order is used.
-
-`p_compass_draw_order X`\
-`p_cgaz_draw_order X`\
-`p_snap_draw_order X`\
-`p_pitch_draw_order X`\
-`p_ammo_draw_order X`\
-`p_jump_draw_order X`\
-`p_timer_draw_order X`\
-`p_accel_draw_order X`
-
-For example if you want to draw snap hud on top of accel hud, just make sure the `p_snap_draw_order` have greater value then `p_accel_draw_order`.
-
 ### Proportions:
 `p_accel_yh X X`\
 X x - y coord of hud center\
@@ -75,6 +61,7 @@ x X - height of hud (approximate)
 `p_accel_vline_size X` - size of vertical lines\
 `p_accel_cond_size X` - size of condensed acceleration line\
 `p_accel_p_offset X` - offset of predictions
+`p_accel_p_cj_offset X` - offset of jump/crunch prediction
 
 Each value is relative to 640x480 resolution, scaled up to real resolution.
 
@@ -88,7 +75,8 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 2 - draw prediction of strafe/sidemove
 
 `p_accel_p_strafe X` - while strafing (WA or WD keys) *only vq3*\
-`p_accel_p_opposite X` - the current move just on opposite side
+`p_accel_p_opposite X` - the current move just on opposite side\
+`p_accel_p_cj X` - the current move with jump/crouch
 
 0 - do not predict\
 1 - do not predict\
@@ -98,11 +86,13 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 `p_accel_rgba X X X X` - color of positive acceleration\
 `p_accel_neg_rgba X X X X` - color of negative acceleration\
 `p_accel_hl_rgba X X X X` - highlight color of positive acceleration\
+`p_accel_hl_g_adj_rgba X X X X` - highlight color of greater adjecent zone\
 `p_accel_hl_neg_rgba X X X X` - highlight color of negative acceleration\
 `p_accel_cur_rgba X X X X` - color of line for current acceleration\
 `p_accel_line_rgba X X X X` - color of positive line when in line graph mode\
 `p_accel_line_neg_rgba X X X X` - color of negative line when in line graph mode\
 `p_accel_line_hl_rgba X X X X` - highlight color of positive line when in line graph mode\
+`p_accel_line_hl_g_adj_rgba X X X X` - highlight color of greater adjecent zone line\
 `p_accel_line_hl_neg_rgba X X X X` - highlight color of negative line when in line graph mode\
 `p_accel_vline_rgba X X X X` - custom color for vertical lines\
 `p_accel_zero_rgba X X X X` - color of zero acceleration in condensed acceleration line
@@ -113,12 +103,29 @@ For example: `p_accel_rgba .2 .9 .2 .6`.
 ### Color modificators:
 `p_accel_p_strafe_rgbam X X X X` - color modificator for predicting strafe\
 `p_accel_p_sm_rgbam X X X X` - color modificator for predicting sidemove\
-`p_accel_p_opposite_rgbam X X X X` - color modificator for predicting opposite side
+`p_accel_p_opposite_rgbam X X X X` - color modificator for predicting opposite side\
+`p_accel_p_cj_rgbam X X X X` - color modificatior for predicting same move with jump/crouch
 
 
 Values can range from -1 to 1, for example `p_accel_p_strafe_rgbam -.2 -.1 .2 -.2` would make of
 `p_accel_rgba .2 .9 .2 .6` new color: `0 .8 .4 .4`.
 
+### Huds draw order
+
+Each cvar use value between 0-7, in case same value is set the default order is used.
+
+`p_compass_draw_order X`\
+`p_cgaz_draw_order X`\
+`p_snap_draw_order X`\
+`p_pitch_draw_order X`\
+`p_ammo_draw_order X`\
+`p_jump_draw_order X`\
+`p_timer_draw_order X`\
+`p_accel_draw_order X`
+
+For example if you want to draw snap hud on top of accel hud, just make sure the `p_snap_draw_order` have greater value then `p_accel_draw_order`.
+\
+\
 You can use accelhud.cfg as default config, copy that file into your /defrag folder, then add `exec accelhud.cfg` into your autoexec.cfg.
 \
 \
