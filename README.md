@@ -82,6 +82,11 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 1 - do not predict\
 2 - draw prediction of strafe/sidemove
 
+`p_accel_p_cj_overdraw X` - draw jump/crouch prediction on top of regular move
+
+0 - no\
+1 - yes
+
 ### Colors:
 `p_accel_rgba X X X X` - color of positive acceleration\
 `p_accel_neg_rgba X X X X` - color of negative acceleration\

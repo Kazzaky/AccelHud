@@ -37,12 +37,14 @@ static vmCvar_t accel_rgba;
 static vmCvar_t accel_neg_rgba;
 static vmCvar_t accel_hl_rgba;
 static vmCvar_t accel_hl_neg_rgba;
+static vmCvar_t accel_hl_g_adj_rgba;
 static vmCvar_t accel_current_rgba;
 
 static vmCvar_t accel_line_rgba;
 static vmCvar_t accel_line_neg_rgba;
 static vmCvar_t accel_line_hl_rgba;
 static vmCvar_t accel_line_hl_neg_rgba;
+static vmCvar_t accel_line_hl_g_adj_rgba;
 
 static vmCvar_t accel_vline_rgba;
 static vmCvar_t accel_zero_rgba;
@@ -64,6 +66,7 @@ static vmCvar_t accel_nokey;
 static vmCvar_t accel_strafe;
 static vmCvar_t accel_opposite;
 static vmCvar_t accel_crouchjump;
+static vmCvar_t accel_crouchjump_overdraw;
 
 static vmCvar_t accel_mode_neg;
 
@@ -103,24 +106,24 @@ static cvarTable_t accel_cvars[] = {
   { &accel_min_speed, "p_accel_min_speed", "0", CVAR_ARCHIVE_ND },
   { &accel_yh, "p_accel_yh", "180 30", CVAR_ARCHIVE_ND },
 
-  { &accel_rgba, "p_accel_rgba", ".2 .9 .2 .6", CVAR_ARCHIVE_ND },
-  { &accel_neg_rgba, "p_accel_neg_rgba", ".9 .2 .2 .6", CVAR_ARCHIVE_ND },
-  { &accel_hl_rgba, "p_accel_hl_rgba", ".3 1 .3 .9", CVAR_ARCHIVE_ND },
-  { &accel_hl_neg_rgba, "p_accel_hl_neg_rgba", ".9 .3 .3 .9", CVAR_ARCHIVE_ND },
-  { &accel_current_rgba, "p_accel_cur_rgba", ".9 .1 .9 .9", CVAR_ARCHIVE_ND },
-  { &accel_line_rgba, "p_accel_line_rgba", ".5 .9 .5 .8", CVAR_ARCHIVE_ND },
-  { &accel_line_neg_rgba, "p_accel_line_neg_rgba", ".9 .5 .5 .8", CVAR_ARCHIVE_ND },
-  { &accel_line_hl_rgba, "p_accel_line_hl_rgba", ".6 1 .6 .9", CVAR_ARCHIVE_ND },
-  { &accel_line_hl_neg_rgba, "p_accel_line_hl_neg_rgba", "1 .6 .6 .9", CVAR_ARCHIVE_ND },
-  { &accel_vline_rgba, "p_accel_vline_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
-  { &accel_zero_rgba, "p_accel_zero_rgba", ".1 .1 .9 .7", CVAR_ARCHIVE_ND },
-  { &accel_hl_neg_rgba, "p_accel_hl_g_adj_rgba", ".1 .9 .9 .9", CVAR_ARCHIVE_ND },
-  { &accel_hl_neg_rgba, "p_accel_line_hl_g_adj_rgba", ".4 .9 .9 .9", CVAR_ARCHIVE_ND },
+  { &accel_rgba, "p_accel_rgba", ".2 .9 .2 .5", CVAR_ARCHIVE_ND },
+  { &accel_neg_rgba, "p_accel_neg_rgba", ".9 .2 .2 .5", CVAR_ARCHIVE_ND },
+  { &accel_hl_rgba, "p_accel_hl_rgba", ".3 1 .3 .75", CVAR_ARCHIVE_ND },
+  { &accel_hl_neg_rgba, "p_accel_hl_neg_rgba", ".9 .3 .3 .75", CVAR_ARCHIVE_ND },
+  { &accel_current_rgba, "p_accel_cur_rgba", ".9 .1 .9 .75", CVAR_ARCHIVE_ND },
+  { &accel_line_rgba, "p_accel_line_rgba", ".5 .9 .5 .6", CVAR_ARCHIVE_ND },
+  { &accel_line_neg_rgba, "p_accel_line_neg_rgba", ".9 .5 .5 .6", CVAR_ARCHIVE_ND },
+  { &accel_line_hl_rgba, "p_accel_line_hl_rgba", ".6 1 .6 .8", CVAR_ARCHIVE_ND },
+  { &accel_line_hl_neg_rgba, "p_accel_line_hl_neg_rgba", "1 .6 .6 .8", CVAR_ARCHIVE_ND },
+  { &accel_vline_rgba, "p_accel_vline_rgba", ".1 .1 .9 .6", CVAR_ARCHIVE_ND },
+  { &accel_zero_rgba, "p_accel_zero_rgba", ".1 .1 .9 .6", CVAR_ARCHIVE_ND },
+  { &accel_hl_g_adj_rgba, "p_accel_hl_g_adj_rgba", ".9 .55 .0 .8", CVAR_ARCHIVE_ND },
+  { &accel_line_hl_g_adj_rgba, "p_accel_line_hl_g_adj_rgba", "1 .55 .2 .8", CVAR_ARCHIVE_ND },
 
   { &accel_predict_strafe_rgba, "p_accel_p_strafe_rgbam", "-.2 -.1 .4 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_sidemove_rgba, "p_accel_p_sm_rgbam", ".4 -.1 -.2 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 .-8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
-  { &accel_predict_crouchjump_rgba, "p_accel_p_cj_rgbam", "-.2 -.2 .6 0", CVAR_ARCHIVE_ND },
+  { &accel_predict_crouchjump_rgba, "p_accel_p_cj_rgbam", "1 1 1 1", CVAR_ARCHIVE_ND },
   
   { &accel_line_size, "p_accel_line_size", "5", CVAR_ARCHIVE_ND },
   { &accel_vline_size, "p_accel_vline_size", "1", CVAR_ARCHIVE_ND },
@@ -159,6 +162,7 @@ static cvarTable_t accel_cvars[] = {
 
 #define ACCEL_CROUCH_PREDICT       2 // just to make it corelate with other keys
 
+  { &accel_crouchjump_overdraw, "p_accel_p_cj_overdraw", "0", CVAR_ARCHIVE_ND },
 
 
   { &accel_mode_neg, "p_accel_neg_mode", "0", CVAR_ARCHIVE_ND },
@@ -483,6 +487,27 @@ static void PmoveSingle(void)
     }
   }
 
+  // predict same move while jumping / crouching // intentionally last to overdraw regular move
+  if(!accel_crouchjump_overdraw.value && accel_crouchjump.value == ACCEL_CROUCH_PREDICT)
+  {
+    // a/d only for vq3
+    if(!(a.pm_ps.pm_flags & PMF_PROMODE) && !key_forwardmove && key_rightmove){
+      predict = PREDICT_CROUCHJUMP;
+      a.pm.cmd.forwardmove = key_forwardmove;
+      a.pm.cmd.rightmove = key_rightmove;
+      a.pm.cmd.upmove = scale;
+      move();
+    }
+
+    if(key_forwardmove && key_rightmove){
+      predict = PREDICT_CROUCHJUMP;
+      a.pm.cmd.forwardmove = key_forwardmove;
+      a.pm.cmd.rightmove = key_rightmove;
+      a.pm.cmd.upmove = scale;
+      move();
+    }
+  }
+
   // restore original keys
   a.pm.cmd.forwardmove = key_forwardmove;
   a.pm.cmd.rightmove   = key_rightmove;
@@ -502,7 +527,7 @@ static void PmoveSingle(void)
   move();
 
   // predict same move while jumping / crouching // intentionally last to overdraw regular move
-  if(accel_crouchjump.value == ACCEL_CROUCH_PREDICT)
+  if(accel_crouchjump_overdraw.value && accel_crouchjump.value == ACCEL_CROUCH_PREDICT)
   {
     // a/d only for vq3
     if(!(a.pm_ps.pm_flags & PMF_PROMODE) && !key_forwardmove && key_rightmove){
