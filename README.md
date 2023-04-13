@@ -10,8 +10,8 @@ Please note that the AccelHud is currently only pre-alpha version, might be bugg
 
 |            | **Windows** | **Linux** | **macOS** |
 | :--------: | :---------: | :-------: | :-------: |
-| **32-bit** | [cgamex86.dll](../../releases/download/v0.0.8/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.0.8/cgamei386.so) |
-| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.0.8/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.0.8/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.0.8/cgamex86_64.dylib) |
+| **32-bit** | [cgamex86.dll](../../releases/download/v0.0.9/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.0.9/cgamei386.so) |
+| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.0.9/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.0.9/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.0.9/cgamex86_64.dylib) |
 
 ## Build / Instalation
 
@@ -45,6 +45,8 @@ Xx - use custom color for vertical lines\
 xX - include line graph height for vertical lines height
 
 `p_accel_min_speed X` - minimal speed in ups, which is required to draw hud
+
+`p_accel_threshold X` - minimal accel value to show individual graph bar, while in air the range is from 0 to 1.5, you could use for example 0.2 to hide plasma climb hud flickering, please note that this option will **negatively affect** normal hud function by adding delay before showing or hiding prematurely the hud bars, when there is relevant information to show (even tho "insignificant")
 
 `p_accel_neg_mode X` - modes for showing negative acceleration
 
@@ -131,7 +133,7 @@ Each cvar use value between 0-7, in case same value is set the default order is 
 For example if you want to draw snap hud on top of accel hud, just make sure the `p_snap_draw_order` have greater value then `p_accel_draw_order`.
 \
 \
-You can use accelhud.cfg as default config, copy that file into your /defrag folder, then add `exec accelhud.cfg` into your autoexec.cfg.
+You can use accelhud-minimal.cfg as default config, or accelhud.cfg as full-feature demo config, copy that file into your /defrag folder, then run following command in your game console: `exec accelhud.cfg`, you can add this command into your autoexec.cfg to make the config load permanent.
 \
 \
 \

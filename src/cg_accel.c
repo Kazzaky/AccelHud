@@ -74,6 +74,8 @@ static vmCvar_t accel_vline;
 
 static vmCvar_t version;
 
+static vmCvar_t accel_threshold; // -0.38 was the biggest seen plasma climb
+
 
 #if ACCEL_DEBUG
   static vmCvar_t accel_verbose;
@@ -178,6 +180,8 @@ static cvarTable_t accel_cvars[] = {
 #define ACCEL_VL_LINE_H       2 // include bar height
 
   { &version, "p_accel_version", ACCEL_VERSION, CVAR_USERINFO | CVAR_INIT },
+
+  { &accel_threshold, "p_accel_threshold", "0", CVAR_ARCHIVE_ND },
 
   #if ACCEL_DEBUG
     { &accel_verbose, "p_accel_verbose", "0", CVAR_ARCHIVE_ND },
@@ -588,8 +592,8 @@ inline static void add_projection_x(float *x, float *w)
   const float half_fov_x = cg.refdef.fov_x / 2;
   const float half_screen_width = cgs.glconfig.vidWidth / 2.f;
 
-  float angle;
-  float proj_x, proj_w;
+  float angle = 0;
+  float proj_x = 0, proj_w = 0;
 
   switch(mdd_projection.integer){
     case 0:
@@ -1021,8 +1025,13 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         }
       }
 
-      // automatically omit negative accel when plotting predictions, also when negatives are disabled ofc
-      if((predict || accel_mode_neg.value == 0) && speed_delta <= 0){
+      if(
+        // automatically omit negative accel when plotting predictions, also when negatives are disabled ofc
+        ((predict || accel_mode_neg.value == 0) && speed_delta <= 0)
+
+        // when delta doesn't reach threshold value then the bar is completely ommited (currently works for predictions also, could be controlled by another cvar in the future)
+        || fabs(speed_delta) < accel_threshold.value
+      ){
         order++; // just control variable to distinct between adjecent bars (checking with x vs x+width is not possible due to float precision false negative)
         continue;
       }
