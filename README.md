@@ -1,4 +1,4 @@
-# AccelHud extension to Proxymod
+# AccelHud extension to mDd client Proxymod
 
 [![build](https://github.com/Kazzaky/AccelHud/actions/workflows/build_all.yml/badge.svg)](https://github.com/Kazzaky/AccelHud/actions/workflows/build_all.yml)
 
@@ -10,8 +10,8 @@ Please note that the AccelHud is currently only pre-alpha version, might be bugg
 
 |            | **Windows** | **Linux** | **macOS** |
 | :--------: | :---------: | :-------: | :-------: |
-| **32-bit** | [cgamex86.dll](../../releases/download/v0.0.9/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.0.9/cgamei386.so) |
-| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.0.9/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.0.9/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.0.9/cgamex86_64.dylib) |
+| **32-bit** | [cgamex86.dll](../../releases/download/v0.0.10/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.0.10/cgamei386.so) |
+| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.0.10/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.0.10/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.0.10/cgamex86_64.dylib) |
 
 ## Build / Instalation
 
