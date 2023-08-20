@@ -1,5 +1,6 @@
 #include "cg_main_e.h"
 #include "cg_accel.h"
+#include "cg_cursor.h"
 #include "cg_cvar.h"
 #include "cg_local.h"
 
@@ -26,6 +27,7 @@ static vmCvar_t pitch_draw_order;
 static vmCvar_t ammo_draw_order;
 static vmCvar_t jump_draw_order;
 static vmCvar_t timer_draw_order;
+static vmCvar_t cursor_draw_order;
 
 static cvarTable_t draw_order_cvars[] = {
   { &accel_draw_order, "p_accel_draw_order", "0", CVAR_ARCHIVE_ND },
@@ -36,6 +38,7 @@ static cvarTable_t draw_order_cvars[] = {
   { &ammo_draw_order, "p_ammo_draw_order", "0", CVAR_ARCHIVE_ND },
   { &jump_draw_order, "p_jump_draw_order", "0", CVAR_ARCHIVE_ND },
   { &timer_draw_order, "p_timer_draw_order", "0", CVAR_ARCHIVE_ND },
+  { &cursor_draw_order, "p_cursor_draw_order", "0", CVAR_ARCHIVE_ND },
 };
 
 typedef struct {
@@ -52,6 +55,7 @@ static drawCvarPair_t draw_order_table[] = {
     { &ammo_draw_order, draw_ammo },
     { &jump_draw_order, draw_jump },
     { &timer_draw_order, draw_timer },
+    { &cursor_draw_order, draw_cursor },
 };
 
 typedef struct {
@@ -85,6 +89,7 @@ static void (*default_draw_order[])(void) = {
     draw_jump,
     draw_timer,
     draw_accel,
+    draw_cursor,
 };
 
 static void (*draw_call_list[ARRAY_LEN(default_draw_order)])(void);
@@ -99,6 +104,7 @@ void __wrap_init_hud(void)
     init_cvars(draw_order_cvars, ARRAY_LEN(draw_order_cvars));
     __real_init_hud();
     init_accel();
+    init_cursor();
 
     for(i = 0; i < (int)ARRAY_LEN(draw_order_table); ++i){
         last_modification_count += draw_order_table[i].cvar->modificationCount;
@@ -117,6 +123,7 @@ void __wrap_update_hud(void)
     if(!cvar_getInteger("mdd_hud")) return;
 
     update_accel();
+    update_cursor();
 
     size_t len = ARRAY_LEN(draw_order_table);
 
@@ -162,7 +169,7 @@ void __wrap_update_hud(void)
                     break;
                 }
             }
-            // there is allways a match, no need to check or use illogical value
+            // there is allways a match, no need to check or use ilogical value (assert would be nice tho)
         }
 
         qsort(tmp, tmp_count, sizeof(drawOrderPair_t), cmp_draw_pair);
