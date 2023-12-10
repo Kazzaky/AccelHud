@@ -76,6 +76,11 @@ xX - include line graph height for vertical lines height
 
 `p_accel_threshold X` - minimal accel value to show individual graph bar, while in air the range is from 0 to 1.5, you could use for example 0.2 to hide plasma climb hud flickering, please note that this option will **negatively affect** normal hud function by adding delay before showing or hiding prematurely the hud bars, when there is relevant information to show (even tho "insignificant")
 
+`p_accel_window_center 0bXXX`\
+Xxx - making `p_accel_window_center_size` relative\
+xXx - highlight\
+xxX - enable
+
 
 ### Proportions:
 `p_accel_yh X X`\
@@ -85,8 +90,11 @@ x X - height of hud (approximate)
 `p_accel_line_size X` - size of line in line graph mode\
 `p_accel_vline_size X` - size of vertical lines\
 `p_accel_point_line_size X` - size of current acceleration line\
-`p_accel_edge_size X` - size of edge bars
+`p_accel_edge_size X` - size of edge bars\
 `p_accel_cond_size X` - size of condensed acceleration line\
+`p_accel_window_center_size X` - size of window bar center (could be percentage)\
+`p_accel_window_center_min_size X` - minimal size of window bar center
+
 `p_accel_p_offset X` - offset of predictions\
 `p_accel_p_cj_offset X` - offset of jump/crunch prediction
 
@@ -109,7 +117,7 @@ xxX - draw normal\
 
 0 - do not predict\
 Xxx - draw only main window\
-xXx - draw prediction\
+xXx - draw prediction
 
 `p_accel_p_cj_overdraw X` - draw jump/crouch prediction on top of regular move
 
@@ -122,23 +130,33 @@ xXx - draw prediction\
 `p_accel_neg_rgba X X X X` - color of negative acceleration\
 `p_accel_hl_rgba X X X X` - highlight color of positive acceleration\
 `p_accel_hl_g_adj_rgba X X X X` - highlight color of greater adjecent zone\
-`p_accel_hl_neg_rgba X X X X` - highlight color of negative acceleration\
-`p_accel_cur_rgba X X X X` - color of line for current acceleration\
+`p_accel_hl_neg_rgba X X X X` - highlight color of negative acceleration
+
+`p_accel_cur_rgba X X X X` - color of line for current acceleration
+
 `p_accel_line_rgba X X X X` - color of positive line when in line graph mode\
 `p_accel_line_alt_rgba X X X X` - alternating color for line graph mode\
 `p_accel_line_neg_rgba X X X X` - color of negative line when in line graph mode\
 `p_accel_line_hl_rgba X X X X` - highlight color of positive line when in line graph mode\
 `p_accel_line_hl_g_adj_rgba X X X X` - highlight color of greater adjecent zone line\
-`p_accel_line_hl_neg_rgba X X X X` - highlight color of negative line when in line graph mode\
-`p_accel_vline_rgba X X X X` - custom color for vertical lines\
-`p_accel_zero_rgba X X X X` - color of zero acceleration in condensed acceleration line\
+`p_accel_line_hl_neg_rgba X X X X` - highlight color of negative line when in line graph mode
+
+`p_accel_vline_rgba X X X X` - custom color for vertical lines
+
+`p_accel_zero_rgba X X X X` - color of zero acceleration in condensed acceleration line
+
 `p_accel_window_rgba X X X X` - custom color for main window\
 `p_accel_window_hl_rgba X X X X` - hightlight color for main window\
 `p_accel_line_window_rgba X X X X` - color for main window in line graph mode\
-`p_accel_line_window_hl_rgba X X X X` - highlight color for main window in line graph mode\
+`p_accel_line_window_hl_rgba X X X X` - highlight color for main window in line graph mode
 
 `p_accel_near_edge_rgba X X X X` - near edge color (minimal cgaz like)\
-`p_accel_far_edge_rgba X X X X` - far edge color (maximal cgaz like)\
+`p_accel_far_edge_rgba X X X X` - far edge color (maximal cgaz like)
+
+`p_accel_window_center_rgba X X X X` - color of window bar center\
+`p_accel_window_center_hl_rgba X X X X` - highlight color of window bar center\
+`p_accel_line_window_center_rgba X X X X` - color of window bar center in line graph mode\
+`p_accel_line_window_center_hl_rgba X X X X` - highlight color of window bar center in line graph mode
 
 Colors order is: Red Green Blue Alpha, each as value between 0 and 1.\
 For example: `p_accel_rgba .2 .9 .2 .6`.

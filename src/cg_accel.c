@@ -7,6 +7,7 @@
  */
 
 
+#include <float.h>
 #include <stdlib.h>
 
 #include "cg_accel.h"
@@ -63,6 +64,11 @@ static vmCvar_t accel_predict_sidemove_rgba;
 static vmCvar_t accel_predict_opposite_rgba;
 static vmCvar_t accel_predict_crouchjump_rgba;
 
+static vmCvar_t accel_window_center_rgba;
+static vmCvar_t accel_line_window_center_rgba;
+static vmCvar_t accel_window_center_hl_rgba;
+static vmCvar_t accel_line_window_center_hl_rgba;
+
 static vmCvar_t accel_line_size;
 static vmCvar_t accel_vline_size;
 static vmCvar_t accel_condensed_size;
@@ -94,6 +100,10 @@ static vmCvar_t accel_merge_threshold; // width threshold not delta !
 
 static vmCvar_t accel_edge;
 static vmCvar_t accel_edge_size;
+
+static vmCvar_t accel_window_center;
+static vmCvar_t accel_window_center_size;
+static vmCvar_t accel_window_center_min_size;
 
 
 #if ACCEL_DEBUG
@@ -158,6 +168,11 @@ static cvarTable_t accel_cvars[] = {
   { &accel_predict_sidemove_rgba, "p_accel_p_sm_rgbam", ".4 -.1 -.2 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 .-8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
   { &accel_predict_crouchjump_rgba, "p_accel_p_cj_rgbam", "1 1 1 1", CVAR_ARCHIVE_ND },
+
+  { &accel_window_center_rgba, "p_accel_window_center_rgba", "1 .4 .2 .9", CVAR_ARCHIVE_ND },
+  { &accel_line_window_center_rgba, "p_accel_line_window_center_rgba", ".9 .3 .3 .9", CVAR_ARCHIVE_ND },
+    { &accel_window_center_hl_rgba, "p_accel_window_center_hl_rgba", ".9 .6 .3 .9", CVAR_ARCHIVE_ND },
+  { &accel_line_window_center_hl_rgba, "p_accel_line_window_center_hl_rgba", ".8 .5 .5 .9", CVAR_ARCHIVE_ND },
   
   { &accel_line_size, "p_accel_line_size", "5", CVAR_ARCHIVE_ND },
   { &accel_vline_size, "p_accel_vline_size", "1", CVAR_ARCHIVE_ND },
@@ -211,8 +226,12 @@ static cvarTable_t accel_cvars[] = {
 
 { &accel_edge_size, "p_accel_edge_size", "1", CVAR_ARCHIVE_ND },
 
+{ &accel_window_center, "p_accel_window_center", "0b000", CVAR_ARCHIVE_ND },
+#define ACCEL_WINDOW_CENTER_HL 2  // highlight 
+#define ACCEL_WINDOW_CENTER_RELATIVE 4  // making p_accel_window_center_size percentage of bar width
 
-  
+{ &accel_window_center_size, "p_accel_window_center_size", "10", CVAR_ARCHIVE_ND },
+{ &accel_window_center_min_size, "p_accel_window_center_min_size", "5", CVAR_ARCHIVE_ND },
 
   #if ACCEL_DEBUG
     { &accel_verbose, "p_accel_verbose", "0", CVAR_ARCHIVE_ND },
@@ -245,6 +264,10 @@ enum {
   RGBA_I_PREDICT_AD,
   RGBA_I_PREDICT_OPPOSITE,
   RGBA_I_PREDICT_CROUCHJUMP,
+  RGBA_I_WINDOW_CENTER,
+  RGBA_I_BORDER_WINDOW_CENTER,
+  RGBA_I_WINDOW_CENTER_HL,
+  RGBA_I_BORDER_WINDOW_CENTER_HL,
   RGBA_I_LENGTH
 };
 
@@ -301,6 +324,8 @@ static float predict_crouchjump_offset_scaled;
 static float vel_angle;
 static float yaw;
 static float edge_size_scaled;
+static float window_center_size_scaled;
+static float window_center_min_size_scaled;
 
 static vec4_t color_tmp;
 
@@ -366,6 +391,8 @@ void draw_accel(void)
   accel_window_grow_limit.integer = cvar_getInteger("p_accel_window_grow_limit");
 
   accel_edge.integer  = cvar_getInteger("p_accel_edge");
+
+  accel_window_center.integer = cvar_getInteger("p_accel_window_center");
 
   ParseVec(accel_yh.string, a.graph_yh, 2);
   for (int i = 0; i < RGBA_I_LENGTH; ++i) ParseVec(accel_cvars[4 + i].vmCvar->string, a.graph_rgba[i], 4);
@@ -483,6 +510,9 @@ static void PmoveSingle(void)
   yaw = DEG2RAD(a.pm_ps.viewangles[YAW]);
   color_alternate = 0;
   edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
+  window_center_size_scaled = accel_window_center_size.value * cgs.screenXScale;
+  window_center_min_size_scaled = accel_window_center_min_size.value * cgs.screenXScale;
+
 
   predict = 0;
   predict_window = 0;
@@ -1213,7 +1243,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
   // determine the window bar
   int window_mode = ((!predict && accel.integer & ACCEL_WINDOW) || (predict && predict_window)) ? 1 : 0;
-  int need_window = window_mode || accel.integer & ACCEL_COLOR_ALTERNATE || accel.integer & ACCEL_CUSTOM_WINDOW_COL || accel.integer & ACCEL_HL_WINDOW;
+  int need_window = window_mode || accel.integer & ACCEL_COLOR_ALTERNATE || accel.integer & ACCEL_CUSTOM_WINDOW_COL || accel.integer & ACCEL_HL_WINDOW || accel_window_center.integer;
   yaw_min_distance = 2 * M_PI;
   if(need_window){
     for(it = start; it && it != end->next; it = it->next)
@@ -1257,7 +1287,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     hightlight_swap = a.pm.cmd.rightmove > 0 ? 1 : -1;
   } 
   
-  // *** draw ***
+  // determine the start and end bars
 
   // when drawing just window bar skip all other positive (when we do not got window bar, draw full graph as normally)
   if(window_mode && window_bar){
@@ -1304,6 +1334,38 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     }
     color_alternate_origin = color_alternate = !(count % 2); // try to keep same alternating colors 
   }
+
+
+  // calculate actual size of window center
+
+  float window_center_size_calculated = 0;
+  float window_parts_size = 0;
+  if(!predict && window_bar && accel_window_center.integer)
+  {
+    // relative / absolute size switch
+    if(accel_window_center.integer & ACCEL_WINDOW_CENTER_RELATIVE){
+      window_center_size_calculated = (accel_window_center_size.value / 100) * window_bar->width;
+    }
+    else{
+      window_center_size_calculated = window_center_size_scaled;
+    }
+
+    // applying min size
+    if(window_center_size_calculated < window_center_min_size_scaled){
+      window_center_size_calculated = window_center_min_size_scaled;
+    }
+
+    // size check with actual window bar
+    if(window_bar->width <= window_center_size_calculated)
+    {
+      window_center_size_calculated = window_bar->width;
+    }
+
+    window_parts_size = (window_bar->width - window_center_size_calculated) / 2;
+  }
+
+
+  // *** draw ***
 
   // actual drawing si done here, for each bar in graph
   for(it = start; it && it != end->next; it = it->next)
@@ -1362,18 +1424,41 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
           {
             // draw uncovered area
-            // trap_R_DrawStretchPic(bar->x, bar->y + line_height, bar->width,
-            //     height - line_height, 0, 0, 0, 0, cgs.media.whiteShader);
-            draw_positive(bar->x, bar->y + line_height, bar->width, height - line_height);
+            if(!predict && bar == window_bar && accel_window_center.integer){
+              // in case we draw window center we need to split the window bar to parts
+              if(window_parts_size > FLT_EPSILON * FLT_MIN)
+              {
+                draw_positive(bar->x, bar->y + line_height, window_parts_size, height - line_height);
+                draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height);
+              }// else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+            }
+            else {
+              draw_positive(bar->x, bar->y + line_height, bar->width, height - line_height);
+            }
           }
           // draw border line
           set_color_inc_pred(i_color);
-          //trap_R_DrawStretchPic(bar->x, bar->y, bar->width, line_height, 0, 0, 0, 0, cgs.media.whiteShader);
-          draw_positive(bar->x, bar->y, bar->width, line_height);
+          if(!predict && bar == window_bar && accel_window_center.integer){
+            // in case we draw window center we need to split the window bar to parts
+            if(window_parts_size > FLT_EPSILON * FLT_MIN)
+            {
+              draw_positive(bar->x, bar->y, window_parts_size, line_height);
+              draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height);
+            } // else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+          }
+          else{
+            draw_positive(bar->x, bar->y, bar->width, line_height);
+          }
         }
         else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
-          //trap_R_DrawStretchPic(bar->x, bar->y, bar->width, height, 0, 0, 0, 0, cgs.media.whiteShader);
-          draw_positive(bar->x, bar->y, bar->width, height);
+          if(!predict && bar == window_bar && accel_window_center.integer){
+            if(window_parts_size > FLT_EPSILON * FLT_MIN){
+              draw_positive(bar->x, bar->y, window_parts_size, height);
+              draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, height);
+            }// else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+          }else{
+            draw_positive(bar->x, bar->y, bar->width, height);
+          }
         }
       }
       else if(bar->polarity < 0){ // negative bar
@@ -1456,6 +1541,36 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       }
     } // /vlines
   } // /for each bar
+
+  // window center drawing (this one is specific to window bar so no need to have it in bar loop)
+  if(!predict && window_bar && accel_window_center.integer){
+    // would be easier to create actual or just helper bar and just pass it to the is_within_angle function
+    if(accel_window_center.integer & ACCEL_WINDOW_CENTER_HL && window_bar->angle - (window_parts_size / resolution_ratio) * x_angle_ratio > center_angle && window_bar->angle - ((window_parts_size + window_center_size_calculated) / resolution_ratio) * x_angle_ratio < center_angle){
+      set_color_inc_pred(RGBA_I_WINDOW_CENTER_HL);
+      i_color = RGBA_I_BORDER_WINDOW_CENTER_HL;
+    }
+    else{
+      set_color_inc_pred(RGBA_I_WINDOW_CENTER);
+      i_color = RGBA_I_BORDER_WINDOW_CENTER;
+    }
+    height = ypos_scaled - window_bar->y;
+    if(accel.integer & ACCEL_LINE_ACTIVE)
+    {
+      line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
+      // if border does not cover whole area, draw rest of the bar
+      if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
+      {
+        // draw uncovered area
+        draw_positive(window_bar->x + window_parts_size, window_bar->y + line_height, window_center_size_calculated, height - line_height);
+      }
+      // draw border line
+      set_color_inc_pred(i_color);
+      draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated, line_height);
+    }
+    else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
+      draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated, height);
+    }
+  }
 
   // condensed / zero bars
   if(!predict)

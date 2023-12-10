@@ -1,4 +1,7 @@
 # Changelog
+## [Alpha v0.1.1]
+### Added
+- Added new feature of drawing center of window bar with different color `p_accel_window_center`, window mode doesn't have to be enabled for this to work.
 
 ## [Alpha v0.1.0]
 ### Added
