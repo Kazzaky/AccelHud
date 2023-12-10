@@ -4,7 +4,7 @@
 
 ![demo of accel hud](./demo-small.gif)
 
-Please note that the AccelHud is currently only pre-alpha version, might be buggy.
+Please note that the AccelHud is currently only alpha version, might be buggy.
 
 ## Binaries:
 
