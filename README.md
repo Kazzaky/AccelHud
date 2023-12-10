@@ -108,7 +108,7 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 0 - do not draw hud at all\
 Xxx - draw only main window\
 xXx - draw prediction of strafe/sidemove\
-xxX - draw normal\
+xxX - draw normal
 
 
 `p_accel_p_strafe 0bXXX` - while strafing (WA or WD keys) *only vq3*\
