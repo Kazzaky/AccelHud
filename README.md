@@ -29,21 +29,22 @@ In terms of this hud "main window" refer to the most near to velocity vector bar
 
 ## Configuration options
 
-`p_accel 0bXXXXXXXXXXXXXX`\
-Xxxxxxxxxxxxxx - color alternate (experimental)\
-xXxxxxxxxxxxxx - flip negative bars, they grow up instead down\
-xxXxxxxxxxxxxx - highlight main window\
-xxxXxxxxxxxxxx - custom color for main window\
-xxxxXxxxxxxxxx - draw only main window\
-xxxxxXxxxxxxxx - highlight greater adjecent zone (experimental)\
-xxxxxxXxxxxxxx - uniform acceleration value\
-xxxxxxxXxxxxxx - draw condensed acceleration line\
-xxxxxxxxXxxxxx - draw current acceleration line\
-xxxxxxxxxXxxxx - draw vertical lines\
-xxxxxxxxxxXxxx - disable drawing bars\
-xxxxxxxxxxxXxx - draw line graph\
-xxxxxxxxxxxxXx - highlight active zone\
-xxxxxxxxxxxxxX - draw basic hud
+`p_accel 0bXXXXXXXXXXXXXX` - main settings of accel hud\
+Xxxxxxxxxxxxxxx - center bars vertically\
+xXxxxxxxxxxxxxx - color alternate (experimental)\
+xxXxxxxxxxxxxxx - flip negative bars, they grow up instead down\
+xxxXxxxxxxxxxxx - highlight main window\
+xxxxXxxxxxxxxxx - custom color for main window\
+xxxxxXxxxxxxxxx - draw only main window\
+xxxxxxXxxxxxxxx - highlight greater adjecent zone (experimental)\
+xxxxxxxXxxxxxxx - uniform acceleration value\
+xxxxxxxxXxxxxxx - draw condensed acceleration line\
+xxxxxxxxxXxxxxx - draw current acceleration line\
+xxxxxxxxxxXxxxx - draw vertical lines\
+xxxxxxxxxxxXxxx - disable drawing bars\
+xxxxxxxxxxxxXxx - draw line graph\
+xxxxxxxxxxxxxXx - highlight active zone\
+xxxxxxxxxxxxxxX - draw basic hud
 
 `p_accel_trueness 0bXXXX`\
 Xxxx - disable dynamic acceleration value correction\
@@ -63,10 +64,12 @@ xX - include line graph height for vertical lines height
 1 - enable negative acceleration\
 2 - show only adjecent negative acceleration
 
-`p_accel_edge X` - draw edges of positive graph portion in regular graph, similar like cgaz min/max zone, except edges do not grow and are not really part of graph, if you reach them then you are already out of the positive range
+`p_accel_edge 0bXXX` - draw edges of positive graph portion in regular graph, similar like cgaz min/max zone, except edges do not grow and are not really part of graph, if you reach them then you are already out of the positive range
 
-0 - enable\
-1 - disable
+0 - disable\
+Xxx - vertically center edges\
+xXx - extend height to negative graph\
+xxX - draw basic edges
 
 `p_accel_merge_threshold X` - maximal width of bars which will merge to longer, value is in pixels, 0 will disable merging
 
@@ -76,11 +79,17 @@ xX - include line graph height for vertical lines height
 
 `p_accel_threshold X` - minimal accel value to show individual graph bar, while in air the range is from 0 to 1.5, you could use for example 0.2 to hide plasma climb hud flickering, please note that this option will **negatively affect** normal hud function by adding delay before showing or hiding prematurely the hud bars, when there is relevant information to show (even tho "insignificant")
 
-`p_accel_window_center 0bXXX`\
-Xxx - making `p_accel_window_center_size` relative\
-xXx - highlight\
-xxX - enable
+`p_accel_window_center 0bXXX` - will add zone to window bar in the center to easily navigate between rotation rate (kinda superseded with aim zone).\
+Xxx - makes `p_accel_window_center_size` relative\
+xXx - enable zone highlight\
+xxX - drawing of basic window center
 
+`p_accel_aim_zone 0bXXXXX` - will add zone to window bar at the far end where the rotation is higher (thus reaching the higher accel faster), similary like window center this is useful to easily navigate between rotation rate.\
+Xxxxx - subtract the aim zone from window zone (otherwise its overdrawn)\
+xXxxx - vertically center aim zone\
+xxXxx - makes `p_accel_aim_zone_size` relative\
+xxxXx - enable zone highlight\
+xxxxX - draw basic aim zone
 
 ### Proportions:
 `p_accel_yh X X`\
@@ -93,10 +102,21 @@ x X - height of hud (approximate)
 `p_accel_edge_size X` - size of edge bars\
 `p_accel_cond_size X` - size of condensed acceleration line\
 `p_accel_window_center_size X` - size of window bar center (could be percentage)\
-`p_accel_window_center_min_size X` - minimal size of window bar center
+`p_accel_window_center_min_size X` - minimal size of window bar center\
+`p_accel_aim_zone_size` - size of the aim zone (could be percentage)\
+`p_accel_aim_zone_min_size` - minimal size of the aim zone
 
 `p_accel_p_offset X` - offset of predictions\
-`p_accel_p_cj_offset X` - offset of jump/crunch prediction
+`p_accel_p_cj_offset X` - offset of jump/crunch prediction\
+`p_accel_vcenter_offset X` - offset added to vertically centered bars
+
+`p_accel_base_height X` - aka minimal height for each bar, but "base" as its added not clipped\
+`p_accel_max_height X` - maximal bar height (clip off)\
+`p_accel_edge_height X` - custom height of the edges or -1 for same height as graph bar\
+`p_accel_edge_min_height X` - minimal height of edges\
+`p_accel_aim_zone_height X` - cutom height of the aim zone or -1 for the same height as graph bar\
+`p_accel_aim_zone_min_height X` - minimal height of aim zone
+
 
 Each value is relative to 640x480 resolution, scaled up to real resolution.
 
@@ -157,6 +177,11 @@ xXx - draw prediction
 `p_accel_window_center_hl_rgba X X X X` - highlight color of window bar center\
 `p_accel_line_window_center_rgba X X X X` - color of window bar center in line graph mode\
 `p_accel_line_window_center_hl_rgba X X X X` - highlight color of window bar center in line graph mode
+
+`p_accel_aim_zone_rgba` - color of aim zone\
+`p_accel_line_aim_zone_rgba` - color of aim zone in line graph mode\
+`p_accel_aim_zone_hl_rgba` - highlight color of aim zone\
+`p_accel_line_aim_zone_hl_rgba` - highlight color of aim zone in line graph mode
 
 Colors order is: Red Green Blue Alpha, each as value between 0 and 1.\
 For example: `p_accel_rgba .2 .9 .2 .6`.

@@ -6,6 +6,10 @@
  * additional licence rules may apply.
  */
 
+ // TODO: defrag offset pointers point to the previous snapshot, they are all one frame behind actual data, affect whole proxymode
+ // TODO: horizontally center the *_height to bar horizontal center (did i actually ment vertically ?)
+ // TODO: refactor aim zone substitution
+
 
 #include <float.h>
 #include <stdlib.h>
@@ -19,7 +23,7 @@
 #include "cg_local.h"
 #include "cg_utils.h"
 
-#include "cg_syscall.h"
+// #include "cg_syscall.h"
 
 #include "common.h"
 #include "q_shared.h"
@@ -32,6 +36,9 @@
 static vmCvar_t accel;
 static vmCvar_t accel_trueness;
 static vmCvar_t accel_min_speed;
+static vmCvar_t accel_base_height;
+static vmCvar_t accel_max_height;
+static vmCvar_t accel_vcenter_offset;
 static vmCvar_t accel_yh;
 
 static vmCvar_t accel_rgba;
@@ -69,6 +76,11 @@ static vmCvar_t accel_line_window_center_rgba;
 static vmCvar_t accel_window_center_hl_rgba;
 static vmCvar_t accel_line_window_center_hl_rgba;
 
+static vmCvar_t accel_aim_zone_rgba;
+static vmCvar_t accel_line_aim_zone_rgba;
+static vmCvar_t accel_aim_zone_hl_rgba;
+static vmCvar_t accel_line_aim_zone_hl_rgba;
+
 static vmCvar_t accel_line_size;
 static vmCvar_t accel_vline_size;
 static vmCvar_t accel_condensed_size;
@@ -100,10 +112,18 @@ static vmCvar_t accel_merge_threshold; // width threshold not delta !
 
 static vmCvar_t accel_edge;
 static vmCvar_t accel_edge_size;
+static vmCvar_t accel_edge_height;
+static vmCvar_t accel_edge_min_height;
 
 static vmCvar_t accel_window_center;
 static vmCvar_t accel_window_center_size;
 static vmCvar_t accel_window_center_min_size;
+
+static vmCvar_t accel_aim_zone;
+static vmCvar_t accel_aim_zone_size;
+static vmCvar_t accel_aim_zone_min_size;
+static vmCvar_t accel_aim_zone_height;
+static vmCvar_t accel_aim_zone_min_height;
 
 
 #if ACCEL_DEBUG
@@ -112,7 +132,7 @@ static vmCvar_t accel_window_center_min_size;
 
 
 static cvarTable_t accel_cvars[] = {
-  { &accel, "p_accel", "0b00000000000000", CVAR_ARCHIVE_ND },
+  { &accel, "p_accel", "0b000000000000000", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_DISABLED            0
 #define ACCEL_ENABLE              1 // the basic view
@@ -129,6 +149,7 @@ static cvarTable_t accel_cvars[] = {
 #define ACCEL_HL_WINDOW           2048 // when at window highlight it
 #define ACCEL_NEG_UP              4096 // negatives grow up (not down as default)
 #define ACCEL_COLOR_ALTERNATE     8192 // alternating positive colors
+#define ACCEL_VCENTER             16384 // apply vertical bar centering
 
 
   { &accel_trueness, "p_accel_trueness", "0b0000", CVAR_ARCHIVE_ND },
@@ -140,6 +161,9 @@ static cvarTable_t accel_cvars[] = {
 // 1000 ups -> delta ~1.5f, 3000 ups -> delta ~ 1.0f, 5000 ups -> delta ~ 0.5f
 
   { &accel_min_speed, "p_accel_min_speed", "0", CVAR_ARCHIVE_ND },
+  { &accel_base_height, "p_accel_base_height", "0", CVAR_ARCHIVE_ND },
+  { &accel_max_height, "p_accel_max_height", "50", CVAR_ARCHIVE_ND },
+  { &accel_vcenter_offset, "p_accel_vcenter_offset", "25", CVAR_ARCHIVE_ND },
   { &accel_yh, "p_accel_yh", "180 30", CVAR_ARCHIVE_ND },
 
   { &accel_rgba, "p_accel_rgba", ".2 .9 .2 .5", CVAR_ARCHIVE_ND },
@@ -164,6 +188,7 @@ static cvarTable_t accel_cvars[] = {
   { &accel_line_window_rgba, "p_accel_line_window_rgba", ".6 1 .7 .7", CVAR_ARCHIVE_ND },
   { &accel_line_window_hl_rgba, "p_accel_line_window_hl_rgba", ".7 1 .8 .9", CVAR_ARCHIVE_ND },
 
+
   { &accel_predict_strafe_rgba, "p_accel_p_strafe_rgbam", "-.2 -.1 .4 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_sidemove_rgba, "p_accel_p_sm_rgbam", ".4 -.1 -.2 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 .-8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
@@ -173,6 +198,13 @@ static cvarTable_t accel_cvars[] = {
   { &accel_line_window_center_rgba, "p_accel_line_window_center_rgba", ".9 .3 .3 .9", CVAR_ARCHIVE_ND },
     { &accel_window_center_hl_rgba, "p_accel_window_center_hl_rgba", ".9 .6 .3 .9", CVAR_ARCHIVE_ND },
   { &accel_line_window_center_hl_rgba, "p_accel_line_window_center_hl_rgba", ".8 .5 .5 .9", CVAR_ARCHIVE_ND },
+
+  { &accel_aim_zone_rgba, "p_accel_aim_zone_rgba", ".2 .4 1 .9", CVAR_ARCHIVE_ND },
+  { &accel_line_aim_zone_rgba, "p_accel_line_aim_zone_rgba", ".3 .3 .9 .9", CVAR_ARCHIVE_ND },
+    { &accel_aim_zone_hl_rgba, "p_accel_aim_zone_hl_rgba", ".3 .6 .9 .9", CVAR_ARCHIVE_ND },
+  { &accel_line_aim_zone_hl_rgba, "p_accel_line_aim_zone_hl_rgba", ".5 .5 .8 .9", CVAR_ARCHIVE_ND },
+
+  // add new colors here 
   
   { &accel_line_size, "p_accel_line_size", "5", CVAR_ARCHIVE_ND },
   { &accel_vline_size, "p_accel_vline_size", "1", CVAR_ARCHIVE_ND },
@@ -189,6 +221,7 @@ static cvarTable_t accel_cvars[] = {
   { &accel_strafe, "p_accel_p_strafe", "0b000", CVAR_ARCHIVE_ND },
   { &accel_opposite, "p_accel_p_opposite", "0b000", CVAR_ARCHIVE_ND },
   { &accel_crouchjump, "p_accel_p_cj", "0b000", CVAR_ARCHIVE_ND },
+  
 
 #define ACCEL_MOVE_PREDICT          2
 #define ACCEL_MOVE_PREDICT_WINDOW   4
@@ -220,11 +253,15 @@ static cvarTable_t accel_cvars[] = {
 
 { &accel_merge_threshold, "p_accel_merge_threshold", "2", CVAR_ARCHIVE_ND },
 
-{ &accel_edge, "p_accel_edge", "0", CVAR_ARCHIVE_ND },
+{ &accel_edge, "p_accel_edge", "0b000", CVAR_ARCHIVE_ND },
 
 //#define ACCEL_EDGE_ENABLE 1
+#define ACCEL_EDGE_FULL_SIZE 2
+#define ACCEL_EDGE_VCENTER 4
 
 { &accel_edge_size, "p_accel_edge_size", "1", CVAR_ARCHIVE_ND },
+{ &accel_edge_height, "p_accel_edge_height", "-1", CVAR_ARCHIVE_ND },
+{ &accel_edge_min_height, "p_accel_edge_min_height", "-1", CVAR_ARCHIVE_ND },
 
 { &accel_window_center, "p_accel_window_center", "0b000", CVAR_ARCHIVE_ND },
 #define ACCEL_WINDOW_CENTER_HL 2  // highlight 
@@ -232,6 +269,20 @@ static cvarTable_t accel_cvars[] = {
 
 { &accel_window_center_size, "p_accel_window_center_size", "10", CVAR_ARCHIVE_ND },
 { &accel_window_center_min_size, "p_accel_window_center_min_size", "5", CVAR_ARCHIVE_ND },
+
+{ &accel_aim_zone, "p_accel_aim_zone", "0b00000", CVAR_ARCHIVE_ND },
+
+#define ACCEL_AIM_HL        2
+#define ACCEL_AIM_RELATIVE  4
+#define ACCEL_AIM_VCENTER   8
+#define ACCEL_AIM_SUBTRACT  16
+
+{ &accel_aim_zone_size, "p_accel_aim_zone_size", "10", CVAR_ARCHIVE_ND },
+{ &accel_aim_zone_min_size, "p_accel_aim_zone_min_size", "10", CVAR_ARCHIVE_ND },
+{ &accel_aim_zone_height, "p_accel_aim_zone_height", "-1", CVAR_ARCHIVE_ND },
+{ &accel_aim_zone_min_height, "p_accel_aim_zone_min_height", "-1", CVAR_ARCHIVE_ND },
+
+
 
   #if ACCEL_DEBUG
     { &accel_verbose, "p_accel_verbose", "0", CVAR_ARCHIVE_ND },
@@ -268,6 +319,10 @@ enum {
   RGBA_I_BORDER_WINDOW_CENTER,
   RGBA_I_WINDOW_CENTER_HL,
   RGBA_I_BORDER_WINDOW_CENTER_HL,
+  RGBA_I_AIM_ZONE,
+  RGBA_I_BORDER_AIM_ZONE,
+  RGBA_I_AIM_ZONE_HL,
+  RGBA_I_BORDER_AIM_ZONE_HL,
   RGBA_I_LENGTH
 };
 
@@ -297,6 +352,7 @@ typedef struct graph_bar_ {
   int   order; // control variable for adjecent checking
   float x; // scaled x 
   float y; // scaled y
+  float height; // scaled height (not absolute -> not always positive)
   float width; // scaled width
   float value; // raw delta speed (combined)
   int   polarity; // 1 = positive, 0 = zero, -1 = negative
@@ -324,8 +380,18 @@ static float predict_crouchjump_offset_scaled;
 static float vel_angle;
 static float yaw;
 static float edge_size_scaled;
+static float edge_height_scaled;
+static float edge_min_height_scaled;
 static float window_center_size_scaled;
 static float window_center_min_size_scaled;
+static float aim_zone_size_scaled;
+static float aim_zone_min_size_scaled;
+static float aim_zone_height_scaled;
+static float aim_zone_min_height_scaled;
+static float base_height_scaled;
+static float max_height_scaled;
+static float vcenter_offset_scaled;
+
 
 static vec4_t color_tmp;
 
@@ -393,6 +459,8 @@ void draw_accel(void)
   accel_edge.integer  = cvar_getInteger("p_accel_edge");
 
   accel_window_center.integer = cvar_getInteger("p_accel_window_center");
+
+  accel_aim_zone.integer  = cvar_getInteger("p_accel_aim_zone");
 
   ParseVec(accel_yh.string, a.graph_yh, 2);
   for (int i = 0; i < RGBA_I_LENGTH; ++i) ParseVec(accel_cvars[4 + i].vmCvar->string, a.graph_rgba[i], 4);
@@ -510,8 +578,17 @@ static void PmoveSingle(void)
   yaw = DEG2RAD(a.pm_ps.viewangles[YAW]);
   color_alternate = 0;
   edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
+  edge_height_scaled = accel_edge_height.value * cgs.screenXScale;
+  edge_min_height_scaled = accel_edge_min_height.value * cgs.screenXScale;
   window_center_size_scaled = accel_window_center_size.value * cgs.screenXScale;
   window_center_min_size_scaled = accel_window_center_min_size.value * cgs.screenXScale;
+  aim_zone_size_scaled = accel_aim_zone_size.value * cgs.screenXScale;
+  aim_zone_min_size_scaled = accel_aim_zone_min_size.value * cgs.screenXScale;
+  aim_zone_height_scaled = accel_aim_zone_height.value * cgs.screenXScale;
+  aim_zone_min_height_scaled = accel_aim_zone_min_height.value * cgs.screenXScale;
+  base_height_scaled = accel_base_height.value * cgs.screenXScale;
+  max_height_scaled = accel_max_height.value * cgs.screenXScale;
+  vcenter_offset_scaled = accel_vcenter_offset.value * cgs.screenXScale;
 
 
   predict = 0;
@@ -739,23 +816,51 @@ inline static void draw_positive(float x, float y, float w, float h)
 {
   add_projection_x(&x, &w);
 
+  float y_target = y - zero_gap_scaled / 2;
+
   if(predict){
-    trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2 - (predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled), w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+    y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
   }
-  else {
-    trap_R_DrawStretchPic(x, y - zero_gap_scaled / 2, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+
+  if(accel.integer & ACCEL_VCENTER){
+    y_target -= vcenter_offset_scaled - h / 2; // is h always positible ? might need abs here
   }
+
+  trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+}
+
+// does not set color
+// nvc = no vertical venter
+// used for fetures with its own vcenter settings (edges, aim_zone)
+inline static void draw_positive_nvc(float x, float y, float w, float h)
+{
+  add_projection_x(&x, &w);
+
+  float y_target = y - zero_gap_scaled / 2;
+
+  if(predict){
+    y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
+  }
+
+  trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
 // does not set color
 inline static void draw_negative(float x, float y, float w, float h)
 {
   add_projection_x(&x, &w);
+
+  float y_target = (y - h) + zero_gap_scaled / 2;
+
   if(accel.integer & ACCEL_NEG_UP){
-    trap_R_DrawStretchPic(x, ypos_scaled - zero_gap_scaled / 2 - (y - ypos_scaled), w, h, 0, 0, 0, 0, cgs.media.whiteShader);
-  } else {
-    trap_R_DrawStretchPic(x, (y - h) + zero_gap_scaled / 2, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+    y_target = ypos_scaled - zero_gap_scaled / 2 - (y - ypos_scaled);
   }
+
+  if(accel.integer & ACCEL_VCENTER){
+    y_target += vcenter_offset_scaled - h / 2; // is h always positible ? might need abs here
+  }
+  
+  trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
 //static void (*draw_polar)(const graph_bar * const, int, float, float);
@@ -1172,7 +1277,14 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       bar = &(accel_graph[accel_graph_size]);
       bar->x = i * resolution_ratio;
       bar->polarity = speed_delta ? (speed_delta > 0 ? 1 : -1) : 0;
-      bar->y = ypos_scaled + hud_height_scaled * (accel.integer & ACCEL_UNIFORM_VALUE ? bar->polarity : speed_delta / normalizer) * -1;
+      bar->height = hud_height_scaled * (accel.integer & ACCEL_UNIFORM_VALUE ? bar->polarity : speed_delta / normalizer);
+      if(accel_base_height.value > 0){
+        bar->height += base_height_scaled; 
+      }
+      if(bar->height > max_height_scaled){
+        bar->height = max_height_scaled;
+      }
+      bar->y = ypos_scaled + bar->height * -1; // * -1 because of y axis orientation
       bar->width = resolution_ratio;
       bar->value = speed_delta;
       bar->order = order++;
@@ -1340,29 +1452,65 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
   float window_center_size_calculated = 0;
   float window_parts_size = 0;
-  if(!predict && window_bar && accel_window_center.integer)
-  {
-    // relative / absolute size switch
-    if(accel_window_center.integer & ACCEL_WINDOW_CENTER_RELATIVE){
-      window_center_size_calculated = (accel_window_center_size.value / 100) * window_bar->width;
-    }
-    else{
-      window_center_size_calculated = window_center_size_scaled;
-    }
 
-    // applying min size
-    if(window_center_size_calculated < window_center_min_size_scaled){
-      window_center_size_calculated = window_center_min_size_scaled;
-    }
+  // calculate actual size of aim zone
 
-    // size check with actual window bar
-    if(window_bar->width <= window_center_size_calculated)
+  float aim_zone_size_calculated = 0;
+  int aim_zone_on_right_side = 0;
+
+  // only when we have window bar
+  if(!predict && window_bar){
+    // window center
+    if(accel_window_center.integer)
     {
-      window_center_size_calculated = window_bar->width;
-    }
+      // relative / absolute size switch
+      if(accel_window_center.integer & ACCEL_WINDOW_CENTER_RELATIVE){
+        window_center_size_calculated = (accel_window_center_size.value / 100) * window_bar->width;
+      }
+      else{
+        window_center_size_calculated = window_center_size_scaled;
+      }
 
-    window_parts_size = (window_bar->width - window_center_size_calculated) / 2;
+      // applying min size
+      if(window_center_size_calculated < window_center_min_size_scaled){
+        window_center_size_calculated = window_center_min_size_scaled;
+      }
+
+      // size check with actual window bar
+      if(window_bar->width <= window_center_size_calculated)
+      {
+        window_center_size_calculated = window_bar->width;
+      }
+
+      window_parts_size = (window_bar->width - window_center_size_calculated) / 2;
+    }
+    // aim zone
+    if(accel_aim_zone.integer){
+      // relative / absolute size switch
+      if(accel_aim_zone.integer & ACCEL_AIM_RELATIVE){
+        aim_zone_size_calculated = (accel_aim_zone_size.value / 100) * window_bar->width;
+      }
+      else{
+        aim_zone_size_calculated = aim_zone_size_scaled;
+      }
+
+      // applying min size
+      if(aim_zone_size_calculated < aim_zone_min_size_scaled){
+        aim_zone_size_calculated = aim_zone_min_size_scaled;
+      }
+
+      // size check with actual window bar
+      if(window_bar->width <= aim_zone_size_calculated)
+      {
+        aim_zone_size_calculated = window_bar->width;
+      }
+      
+      if(angle_short_radial_distance(vel_angle, yaw + window_bar->angle) < 0){
+        aim_zone_on_right_side = 1;
+      }
+    }
   }
+
 
 
   // *** draw ***
@@ -1415,7 +1563,8 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           }
         }
         
-        height = ypos_scaled-bar->y;
+        // height = ypos_scaled-bar->y;
+        height = bar->height;
       
         if(accel.integer & ACCEL_LINE_ACTIVE)
         {
@@ -1424,39 +1573,211 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
           {
             // draw uncovered area
-            if(!predict && bar == window_bar && accel_window_center.integer){
-              // in case we draw window center we need to split the window bar to parts
-              if(window_parts_size > FLT_EPSILON * FLT_MIN)
+            if(!predict && bar == window_bar){
+              if(accel_window_center.integer){
+                // in case we draw window center we need to split the window bar to parts
+                if(window_parts_size > FLT_EPSILON * FLT_MIN)
+                {
+                  if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){ // so ugly TODO: refactor
+                    if(aim_zone_size_calculated < window_parts_size){ // one part is cutted
+                      if(aim_zone_on_right_side){
+                        draw_positive(bar->x, bar->y + line_height, window_parts_size, height - line_height);
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size - aim_zone_size_calculated, height - line_height);
+                      }
+                      else
+                      {
+                        draw_positive(bar->x + aim_zone_size_calculated, bar->y + line_height, window_parts_size - aim_zone_size_calculated, height - line_height);
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height);
+                      }
+                    }
+                    else // one part is ommited
+                    {
+                      if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
+                        float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
+                        if(aim_zone_on_right_side){
+                          // cutted right part
+                          draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size - cut_size, height - line_height);
+                        }else{
+                          // cutted left part
+                          draw_positive(bar->x + cut_size, bar->y + line_height, window_parts_size - cut_size, height - line_height);
+                        }
+                      }
+                      else
+                      {
+                        if(aim_zone_on_right_side){
+                          // full right part
+                          draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height);
+                        }else{
+                          // full left part
+                          draw_positive(bar->x, bar->y + line_height, window_parts_size, height - line_height);
+                        }
+                      }
+                    }
+                  }
+                  else // only window center without substration of aim zone
+                  {
+                    draw_positive(bar->x, bar->y + line_height, window_parts_size, height - line_height);
+                    draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height);
+                  }
+                }// else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+              }
+              else // window center feature is disabled
               {
-                draw_positive(bar->x, bar->y + line_height, window_parts_size, height - line_height);
-                draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height);
-              }// else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+                if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){
+                    if(aim_zone_on_right_side){
+                      draw_positive(bar->x, bar->y + line_height, bar->width - aim_zone_size_calculated, height - line_height);
+                    }else{
+                      draw_positive(bar->x + aim_zone_size_calculated, bar->y + line_height, bar->width - aim_zone_size_calculated, height - line_height);
+                    }
+                }
+                else
+                {
+                  // just regular window/center bar no parts or cuts
+                  draw_positive(bar->x, bar->y + line_height, bar->width, height - line_height);
+                }
+              }
             }
-            else {
+            else // either predict or not window/center bar
+            {
               draw_positive(bar->x, bar->y + line_height, bar->width, height - line_height);
             }
           }
           // draw border line
           set_color_inc_pred(i_color);
-          if(!predict && bar == window_bar && accel_window_center.integer){
-            // in case we draw window center we need to split the window bar to parts
-            if(window_parts_size > FLT_EPSILON * FLT_MIN)
+          if(!predict && bar == window_bar){
+            if(accel_window_center.integer){
+              // in case we draw window center we need to split the window bar to parts
+              if(window_parts_size > FLT_EPSILON * FLT_MIN)
+              {
+                if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){ // so ugly TODO: refactor
+                  if(aim_zone_size_calculated < window_parts_size){ // one part is cutted
+                    if(aim_zone_on_right_side){
+                      draw_positive(bar->x, bar->y, window_parts_size, line_height);
+                      draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size - aim_zone_size_calculated, line_height);
+                    }
+                    else
+                    {
+                      draw_positive(bar->x + aim_zone_size_calculated, bar->y, window_parts_size - aim_zone_size_calculated, line_height);
+                      draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height);
+                    }
+                  }
+                  else // one part is ommited
+                  {
+                    if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
+                      float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
+                      if(aim_zone_on_right_side){
+                        // cutted right part
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size - cut_size, line_height);
+                      }else{
+                        // cutted left part
+                        draw_positive(bar->x + cut_size, bar->y, window_parts_size - cut_size, line_height);
+                      }
+                    }
+                    else
+                    {
+                      if(aim_zone_on_right_side){
+                        // full right part
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height);
+                      }else{
+                        // full left part
+                        draw_positive(bar->x, bar->y, window_parts_size, line_height);
+                      }
+                    }
+                  }
+                }
+                else // only window center without substration of aim zone
+                {
+                  draw_positive(bar->x, bar->y, window_parts_size, line_height);
+                  draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height);
+                }
+              } // else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+            }
+            else // window center feature is disabled
             {
-              draw_positive(bar->x, bar->y, window_parts_size, line_height);
-              draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height);
-            } // else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+              if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){
+                  if(aim_zone_on_right_side){
+                    draw_positive(bar->x, bar->y, bar->width - aim_zone_size_calculated, line_height);
+                  }else{
+                    draw_positive(bar->x + aim_zone_size_calculated, bar->y, bar->width + aim_zone_size_calculated, line_height);
+                  }
+              }
+              else
+              {
+                // just regular window/center bar no parts or cuts
+                draw_positive(bar->x, bar->y, bar->width, line_height);
+              }
+            }
           }
-          else{
+          else // either predict or not window/center bar
+          {
             draw_positive(bar->x, bar->y, bar->width, line_height);
           }
         }
         else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
-          if(!predict && bar == window_bar && accel_window_center.integer){
-            if(window_parts_size > FLT_EPSILON * FLT_MIN){
-              draw_positive(bar->x, bar->y, window_parts_size, height);
-              draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, height);
-            }// else entire bar is handled as center so do not draw anything (window center drawing is done separately)
-          }else{
+          if(!predict && bar == window_bar){
+            if(accel_window_center.integer){
+              if(window_parts_size > FLT_EPSILON * FLT_MIN){
+                if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){ // so ugly TODO: refactor
+                  if(aim_zone_size_calculated < window_parts_size){ // one part is cutted
+                    if(aim_zone_on_right_side){
+                      draw_positive(bar->x, bar->y, window_parts_size, height);
+                      draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size - aim_zone_size_calculated, height);
+                    }
+                    else
+                    {
+                      draw_positive(bar->x + aim_zone_size_calculated, bar->y, window_parts_size - aim_zone_size_calculated, height);
+                      draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, height);
+                    }
+                  }
+                  else // one part is ommited
+                  {
+                    if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
+                      float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
+                      if(aim_zone_on_right_side){
+                        // cutted right part
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size - cut_size, height);
+                      }else{
+                        // cutted left part
+                        draw_positive(bar->x + cut_size, bar->y, window_parts_size - cut_size, height);
+                      }
+                    }
+                    else
+                    {
+                      if(aim_zone_on_right_side){
+                        // full right part
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, height);
+                      }else{
+                        // full left part
+                        draw_positive(bar->x, bar->y, window_parts_size, height);
+                      }
+                    }
+                  }
+                }
+                else // only window center without substration of aim zone
+                {
+                  draw_positive(bar->x, bar->y, window_parts_size, height);
+                  draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, height);
+                }
+              }// else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+            }
+            else // window center feature is disabled
+            {
+              if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){
+                  if(aim_zone_on_right_side){
+                    draw_positive(bar->x, bar->y, bar->width - aim_zone_size_calculated, height);
+                  }else{
+                    draw_positive(bar->x + aim_zone_size_calculated, bar->y, bar->width - aim_zone_size_calculated, height);
+                  }
+              }
+              else
+              {
+                // just regular window/center bar no parts or cuts
+                draw_positive(bar->x, bar->y, bar->width, height);
+              }
+            }
+          }
+          else  // either predict or not window/center bar
+          {
             draw_positive(bar->x, bar->y, bar->width, height);
           }
         }
@@ -1492,8 +1813,9 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           i_color = RGBA_I_BORDER_NEG;
         }
 
-        height = (bar->y - ypos_scaled); // height should not be gapped imo need test // + zero_gap_scaled
-        
+        // height = (bar->y - ypos_scaled); // height should not be gapped imo need test // + zero_gap_scaled
+        height = bar->height;
+
         if(accel.integer & ACCEL_LINE_ACTIVE)
         {
           line_height = (height > line_size_scaled ? line_size_scaled : height);
@@ -1543,32 +1865,135 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   } // /for each bar
 
   // window center drawing (this one is specific to window bar so no need to have it in bar loop)
-  if(!predict && window_bar && accel_window_center.integer){
-    // would be easier to create actual or just helper bar and just pass it to the is_within_angle function
-    if(accel_window_center.integer & ACCEL_WINDOW_CENTER_HL && window_bar->angle - (window_parts_size / resolution_ratio) * x_angle_ratio > center_angle && window_bar->angle - ((window_parts_size + window_center_size_calculated) / resolution_ratio) * x_angle_ratio < center_angle){
-      set_color_inc_pred(RGBA_I_WINDOW_CENTER_HL);
-      i_color = RGBA_I_BORDER_WINDOW_CENTER_HL;
-    }
-    else{
-      set_color_inc_pred(RGBA_I_WINDOW_CENTER);
-      i_color = RGBA_I_BORDER_WINDOW_CENTER;
-    }
-    height = ypos_scaled - window_bar->y;
-    if(accel.integer & ACCEL_LINE_ACTIVE)
-    {
-      line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
-      // if border does not cover whole area, draw rest of the bar
-      if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
-      {
-        // draw uncovered area
-        draw_positive(window_bar->x + window_parts_size, window_bar->y + line_height, window_center_size_calculated, height - line_height);
+  if(!predict && window_bar){
+    if(accel_window_center.integer){
+      // would be easier to create actual or just helper bar and just pass it to the is_within_angle function
+      if(accel_window_center.integer & ACCEL_WINDOW_CENTER_HL && window_bar->angle - (window_parts_size / resolution_ratio) * x_angle_ratio > center_angle && window_bar->angle - ((window_parts_size + window_center_size_calculated) / resolution_ratio) * x_angle_ratio < center_angle){
+        set_color_inc_pred(RGBA_I_WINDOW_CENTER_HL);
+        i_color = RGBA_I_BORDER_WINDOW_CENTER_HL;
       }
-      // draw border line
-      set_color_inc_pred(i_color);
-      draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated, line_height);
+      else{
+        set_color_inc_pred(RGBA_I_WINDOW_CENTER);
+        i_color = RGBA_I_BORDER_WINDOW_CENTER;
+      }
+      //height = ypos_scaled - window_bar->y;
+      height = window_bar->height;
+
+      if(accel.integer & ACCEL_LINE_ACTIVE)
+      {
+        line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
+        // if border does not cover whole area, draw rest of the bar
+        if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
+        {
+          // draw uncovered area
+          if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT){
+            if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
+              float cut_size = aim_zone_size_calculated - window_parts_size;
+              if(aim_zone_on_right_side){
+                draw_positive(window_bar->x + window_parts_size, window_bar->y + line_height, window_center_size_calculated - cut_size, height - line_height);
+              }
+              else
+              {
+                draw_positive(window_bar->x + window_parts_size + cut_size, window_bar->y + line_height, window_center_size_calculated - cut_size, height - line_height);
+              }
+            } else if(aim_zone_size_calculated < window_parts_size){
+              // no cutting needed
+              draw_positive(window_bar->x + window_parts_size, window_bar->y + line_height, window_center_size_calculated, height - line_height);
+            } // else whole center is cutted off
+          }
+          else // no subtraction of aim zone
+          {
+            draw_positive(window_bar->x + window_parts_size, window_bar->y + line_height, window_center_size_calculated, height - line_height);
+          }
+        }
+        // draw border line
+        set_color_inc_pred(i_color);
+        if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT){
+          if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
+            float cut_size = aim_zone_size_calculated - window_parts_size;
+            if(aim_zone_on_right_side){
+              draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated - cut_size, line_height);
+            }
+            else
+            {
+              draw_positive(window_bar->x + window_parts_size + cut_size, window_bar->y, window_center_size_calculated - cut_size, line_height);
+            }
+          } else if(aim_zone_size_calculated < window_parts_size){
+            // no cutting needed
+            draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated, line_height);
+          } // else whole center is cutted off
+        }
+        else // no subtraction of aim zone
+        {
+          draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated, line_height);
+        }
+      }
+      else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
+        if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT){
+          if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
+            float cut_size = aim_zone_size_calculated - window_parts_size;
+            if(aim_zone_on_right_side){
+              draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated - cut_size, height);
+            }
+            else
+            {
+              draw_positive(window_bar->x + window_parts_size + cut_size, window_bar->y, window_center_size_calculated - cut_size, height);
+            } 
+          } else if(aim_zone_size_calculated < window_parts_size){
+            // no cutting needed
+            draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated, height);
+          } // else whole center is cutted off
+        }
+        else // no subtraction of aim zone
+        {
+          draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated, height);
+        }
+      }
     }
-    else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
-      draw_positive(window_bar->x + window_parts_size, window_bar->y, window_center_size_calculated, height);
+
+    // aim zone
+    if(accel_aim_zone.integer){
+      float aim_zone_offset = 0;
+      // at which side of window bar is located the aim zone
+      if(aim_zone_on_right_side){
+        // right
+        aim_zone_offset = window_bar->width - aim_zone_size_calculated;
+      }
+
+      // would be easier to create actual or just helper bar and just pass it to the is_within_angle function
+      if(accel_aim_zone.integer & ACCEL_AIM_HL && window_bar->angle - (aim_zone_offset / resolution_ratio) * x_angle_ratio > center_angle && window_bar->angle - ((aim_zone_offset + aim_zone_size_calculated) / resolution_ratio) * x_angle_ratio < center_angle){
+        set_color_inc_pred(RGBA_I_AIM_ZONE_HL);
+        i_color = RGBA_I_BORDER_AIM_ZONE_HL;
+      }
+      else{
+        set_color_inc_pred(RGBA_I_AIM_ZONE);
+        i_color = RGBA_I_BORDER_AIM_ZONE;
+      }
+
+      const float x = window_bar->x + aim_zone_offset;
+
+      //height = ypos_scaled - window_bar->y;
+      height = window_bar->height;
+
+      if(accel_aim_zone_height.value > 0){
+        draw_positive_nvc(x, ypos_scaled - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - aim_zone_height_scaled / 2 : 0), aim_zone_size_calculated, aim_zone_height_scaled);
+      }
+      else if(accel.integer & ACCEL_LINE_ACTIVE)
+      {
+        line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
+        // if border does not cover whole area, draw rest of the bar
+        if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
+        {
+          // draw uncovered area
+          draw_positive_nvc(x, window_bar->y + line_height - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - (height - line_height) / 2 : 0), aim_zone_size_calculated, height - line_height);
+        }
+        // draw border line
+        set_color_inc_pred(i_color);
+        draw_positive_nvc(x, window_bar->y - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - line_height / 2 : 0), aim_zone_size_calculated, line_height);
+      }
+      else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
+        draw_positive_nvc(x, window_bar->y - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - height / 2 : 0), aim_zone_size_calculated, height);
+      }
     }
   }
 
@@ -1637,37 +2062,95 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         // trap_Print(vaf("test: %.3f, vel_angle: %.3f, bar_angle: %.3f, yaw: %.3f\n", test, vel_angle, bar->angle + yaw, yaw));
 
         if(angle_short_radial_distance(vel_angle, yaw + bar->angle) < 0){
-          i_color = RGBA_I_EDGE_FAR;
-          right_i_color = RGBA_I_EDGE_NEAR;
-        }
-        else {
           i_color = RGBA_I_EDGE_NEAR;
           right_i_color = RGBA_I_EDGE_FAR;
         }
+        else {
+          i_color = RGBA_I_EDGE_FAR;
+          right_i_color = RGBA_I_EDGE_NEAR;
+        }
 
-        if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
-        {
+        // get edges height per case
+        float lh, rh;
+
+        if(accel_edge_height.value > 0){
+
+          rh = lh = edge_height_scaled;
+
           // left
-          trap_R_SetColor(a.graph_rgba[i_color]);
-          draw_positive(bar->x - edge_size_scaled, bar->y, edge_size_scaled, ypos_scaled - bar->y);
+          //draw_positive(bar->x - edge_size_scaled, ypos_scaled - (edge_height_scaled / 2), edge_size_scaled, edge_height_scaled);
+
           // right
-          trap_R_SetColor(a.graph_rgba[right_i_color]);
-          draw_positive(bar_tmp->x + bar_tmp->width, bar_tmp->y, edge_size_scaled, ypos_scaled - bar_tmp->y);
+          //draw_positive(bar_tmp->x + bar_tmp->width, ypos_scaled - (edge_height_scaled / 2), edge_size_scaled, edge_height_scaled);
+        }
+        else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
+        {
+          lh = bar->height;
+          rh = bar_tmp->height;
+          
+          // left
+          //draw_positive(bar->x - edge_size_scaled, bar->y, edge_size_scaled, bar->height); // ypos_scaled - bar->y
+
+          // right
+          //draw_positive(bar_tmp->x + bar_tmp->width, bar_tmp->y, edge_size_scaled, bar_tmp->height); // ypos_scaled - bar_tmp->y
         }
         else if(accel.integer & ACCEL_LINE_ACTIVE)
         {
-          // left
-          height = ypos_scaled - bar->y;
-          line_height = (height > line_size_scaled ? line_size_scaled : height);
-          trap_R_SetColor(a.graph_rgba[i_color]);
-          draw_positive(bar->x - edge_size_scaled, bar->y, edge_size_scaled, line_height);
+          lh = bar->height > line_size_scaled ? line_size_scaled : bar->height;
+          rh = bar_tmp->height > line_size_scaled ? line_size_scaled : bar_tmp->height;
 
-          // right
-          height = ypos_scaled - bar_tmp->y;
-          line_height = (height > line_size_scaled ? line_size_scaled : height);
-          trap_R_SetColor(a.graph_rgba[right_i_color]);
-          draw_positive(bar_tmp->x + bar_tmp->width, bar_tmp->y, edge_size_scaled, line_height);
+
+          // // left
+          // // height = ypos_scaled - bar->y;
+          // height = bar->height;
+
+          // line_height = (height > line_size_scaled ? line_size_scaled : height);
+          // draw_positive(bar->x - edge_size_scaled, bar->y, edge_size_scaled, line_height);
+
+          // // right
+          // // height = ypos_scaled - bar_tmp->y;
+          // height = bar_tmp->height;
+
+          // line_height = (height > line_size_scaled ? line_size_scaled : height);
+          // draw_positive(bar_tmp->x + bar_tmp->width, bar_tmp->y, edge_size_scaled, line_height);
         }
+        else // no need to draw anything in the rest of the cases
+        {
+          // skip all positive we just handled
+          it = bar_tmp;
+          continue;
+        }
+
+        // apply min height
+        if(accel_edge_min_height.value > 0){
+          lh = lh < edge_min_height_scaled ? edge_min_height_scaled : lh;
+          rh = rh < edge_min_height_scaled ? edge_min_height_scaled : rh;
+        }
+
+        const float lx = bar->x - edge_size_scaled,
+                    rx = bar_tmp->x + bar_tmp->width;
+
+        float ly, ry;
+
+        if(accel_edge.integer & ACCEL_EDGE_FULL_SIZE){
+          lh = lh * lh;
+          rh = rh * rh;
+          ly = ypos_scaled - lh / 2;
+          ry = ypos_scaled - rh / 2;
+        }
+
+        if(accel_edge.integer & ACCEL_EDGE_VCENTER){
+          ly = ypos_scaled - vcenter_offset_scaled - lh / 2;
+          ry = ypos_scaled - vcenter_offset_scaled - rh / 2;
+        }
+
+        // left
+        trap_R_SetColor(a.graph_rgba[i_color]);
+        draw_positive_nvc(lx, ly, edge_size_scaled, lh);
+
+        // right
+        trap_R_SetColor(a.graph_rgba[right_i_color]);
+        draw_positive_nvc(rx, ry, edge_size_scaled, rh);
 
         // skip all positive we just handled
         it = bar_tmp;
