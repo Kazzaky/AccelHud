@@ -6,15 +6,17 @@
 
 ### Updated
 - Bars can be vertically centered now `p_accel 0bXxxxxxxxxxxxxxx`.
-- Edges functionality extended by size and centering `p_accel_edge 0bXXx`.
+- Edges extended by relative size & height, centering `p_accel_edge 0bXXXXXx`.
+- Window center extended by relative height and centering `p_accel_window_center 0bXXXxxx`.
 - Submodule cgame_proxymod updated to latest, most notably support for defrag 1.91.31, see more at (changelog)[https://github.com/Jelvan1/cgame_proxymod/blob/cfa74ea141f7dfe36b1398869d163a30dbbb8fa0/CHANGELOG.md]
 
 ### Added
+- Added aim zone feature which grow from far window bar zone, the `p_accel_aim_zone*` cvars family.
 - Added offset for vertical centering `p_accel_vcenter_offset`.
 - Added base bar height `p_accel_base_height` aka minimal bar height.
 - Added bar height clipping cvar `p_accel_max_height`.
-- Added aim zone feature which grow from far window bar zone, the `p_accel_aim_zone*` cvars family.
-- Added cvars for edges height control `p_accel_edge_height`, `p_accel_edge_min_height`.
+- Added cvars for edges control `p_accel_edge_height`, `p_accel_edge_min_height`, `p_accel_edge_min_size`, `p_accel_edge_voffset`.
+- Added cvars for window center control `p_accel_window_center_height`, `p_accel_window_center_min_height`, `p_accel_window_center_voffset`.
 
 
 ## [Alpha v0.1.1]

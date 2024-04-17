@@ -64,12 +64,15 @@ xX - include line graph height for vertical lines height
 1 - enable negative acceleration\
 2 - show only adjecent negative acceleration
 
-`p_accel_edge 0bXXX` - draw edges of positive graph portion in regular graph, similar like cgaz min/max zone, except edges do not grow and are not really part of graph, if you reach them then you are already out of the positive range
+`p_accel_edge 0bXXXXXX` - draw edges of positive graph portion in regular graph, similar like cgaz min/max zone, except edges do not grow and are not really part of graph, if you reach them then you are already out of the positive range
 
 0 - disable\
-Xxx - vertically center edges\
-xXx - extend height to negative graph\
-xxX - draw basic edges
+Xxxxxx - forced vertical center\
+xXxxxx - use custom forced vertical center ^\
+xxXxxx - makes `p_accel_edge_height` relative (percentage)\
+xxxXxx - makes `p_accel_edge_size` relative (percentage)\
+xxxxXx - extend height to negative graph\
+xxxxxX - draw basic edges
 
 `p_accel_merge_threshold X` - maximal width of bars which will merge to longer, value is in pixels, 0 will disable merging
 
@@ -79,41 +82,55 @@ xxX - draw basic edges
 
 `p_accel_threshold X` - minimal accel value to show individual graph bar, while in air the range is from 0 to 1.5, you could use for example 0.2 to hide plasma climb hud flickering, please note that this option will **negatively affect** normal hud function by adding delay before showing or hiding prematurely the hud bars, when there is relevant information to show (even tho "insignificant")
 
-`p_accel_window_center 0bXXX` - will add zone to window bar in the center to easily navigate between rotation rate (kinda superseded with aim zone).\
-Xxx - makes `p_accel_window_center_size` relative\
-xXx - enable zone highlight\
-xxX - drawing of basic window center
+`p_accel_window_center 0bXXXXXX` - will add zone to window bar in the center to easily navigate between rotation rate (kinda superseded with aim zone).\
+Xxxxxx - forced vertical center\
+xXxxxx - use custom forced vertical center ^\
+xxXxxx - makes `p_accel_window_center_height` relative (percentage)\
+xxxXxx - makes `p_accel_window_center_size` relative (percentage)\
+xxxxXx - enable zone highlight\
+xxxxxX - drawing of basic window center
 
-`p_accel_aim_zone 0bXXXXX` - will add zone to window bar at the far end where the rotation is higher (thus reaching the higher accel faster), similary like window center this is useful to easily navigate between rotation rate.\
-Xxxxx - subtract the aim zone from window zone (otherwise its overdrawn)\
-xXxxx - vertically center aim zone\
-xxXxx - makes `p_accel_aim_zone_size` relative\
-xxxXx - enable zone highlight\
-xxxxX - draw basic aim zone
+`p_accel_aim_zone 0bXXXXXXX` - will add zone to window bar at the far end where the rotation is higher (thus reaching the higher accel faster), similary like window center this is useful to easily navigate between rotation rate.\
+Xxxxxxx - forced vertical center\
+xXxxxxx - use custom forced vertical center ^\
+xxXxxxx - subtract the aim zone from window zone (otherwise overdrawn)\
+xxxXxxx - makes `p_accel_aim_zone_height` relative (percentage)\
+xxxxXxx - makes `p_accel_aim_zone_size` relative (percentage)\
+xxxxxXx - enable zone highlight\
+xxxxxxX - draw basic aim zone
 
 ### Proportions:
 `p_accel_yh X X`\
 X x - y coord of hud center\
 x X - height of hud (approximate)
 
+#### Sizes:
 `p_accel_line_size X` - size of line in line graph mode\
 `p_accel_vline_size X` - size of vertical lines\
 `p_accel_point_line_size X` - size of current acceleration line\
-`p_accel_edge_size X` - size of edge bars\
+`p_accel_edge_size X` - size of edges\
+`p_accel_edge_min_size X` - minimal size of edges\
 `p_accel_cond_size X` - size of condensed acceleration line\
 `p_accel_window_center_size X` - size of window bar center (could be percentage)\
 `p_accel_window_center_min_size X` - minimal size of window bar center\
 `p_accel_aim_zone_size` - size of the aim zone (could be percentage)\
 `p_accel_aim_zone_min_size` - minimal size of the aim zone
 
+#### Offsets:
 `p_accel_p_offset X` - offset of predictions\
 `p_accel_p_cj_offset X` - offset of jump/crunch prediction\
-`p_accel_vcenter_offset X` - offset added to vertically centered bars
+`p_accel_vcenter_offset X` - offset added to vertically centered bars (away from condensed line)\
+`p_accel_edge_voffset X` - vertical offset added to edges\
+`p_accel_window_center_voffset X` - vertical offsed added to window center\
+`p_accel_aim_zone_voffset X` - vertical offset added to aim zone
 
+#### Heights:
 `p_accel_base_height X` - aka minimal height for each bar, but "base" as its added not clipped\
 `p_accel_max_height X` - maximal bar height (clip off)\
 `p_accel_edge_height X` - custom height of the edges or -1 for same height as graph bar\
 `p_accel_edge_min_height X` - minimal height of edges\
+`p_accel_window_center_height X` - custom height of window center or -1 for same height as graph bar\
+`p_accel_window_center_min_height X` - minimal height of window center\
 `p_accel_aim_zone_height X` - cutom height of the aim zone or -1 for the same height as graph bar\
 `p_accel_aim_zone_min_height X` - minimal height of aim zone
 
