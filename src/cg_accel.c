@@ -463,7 +463,7 @@ void draw_accel(void)
   accel_aim_zone.integer  = cvar_getInteger("p_accel_aim_zone");
 
   ParseVec(accel_yh.string, a.graph_yh, 2);
-  for (int i = 0; i < RGBA_I_LENGTH; ++i) ParseVec(accel_cvars[4 + i].vmCvar->string, a.graph_rgba[i], 4);
+  for (int i = 0; i < RGBA_I_LENGTH; ++i) ParseVec(accel_cvars[7 + i].vmCvar->string, a.graph_rgba[i], 4);
 
   a.pm_ps = *getPs();
 
@@ -1595,21 +1595,21 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
                       if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
                         float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
                         if(aim_zone_on_right_side){
-                          // cutted right part
-                          draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size - cut_size, height - line_height);
-                        }else{
                           // cutted left part
-                          draw_positive(bar->x + cut_size, bar->y + line_height, window_parts_size - cut_size, height - line_height);
+                          draw_positive(bar->x, bar->y + line_height, window_parts_size - cut_size, height - line_height);
+                        }else{
+                          // cutted right part
+                          draw_positive(bar->x + window_parts_size + window_center_size_calculated + cut_size, bar->y + line_height, window_parts_size - cut_size, height - line_height);
                         }
                       }
                       else
                       {
                         if(aim_zone_on_right_side){
-                          // full right part
-                          draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height);
-                        }else{
                           // full left part
                           draw_positive(bar->x, bar->y + line_height, window_parts_size, height - line_height);
+                        }else{
+                          // full right part
+                          draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height);
                         }
                       }
                     }
@@ -1666,21 +1666,21 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
                     if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
                       float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
                       if(aim_zone_on_right_side){
-                        // cutted right part
-                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size - cut_size, line_height);
-                      }else{
                         // cutted left part
-                        draw_positive(bar->x + cut_size, bar->y, window_parts_size - cut_size, line_height);
+                        draw_positive(bar->x, bar->y, window_parts_size - cut_size, line_height);
+                      }else{
+                        // cutted right part
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated + cut_size, bar->y, window_parts_size - cut_size, line_height);
                       }
                     }
                     else
                     {
                       if(aim_zone_on_right_side){
-                        // full right part
-                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height);
-                      }else{
                         // full left part
                         draw_positive(bar->x, bar->y, window_parts_size, line_height);
+                      }else{
+                        // full right part
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height);
                       }
                     }
                   }
@@ -1734,21 +1734,21 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
                     if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
                       float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
                       if(aim_zone_on_right_side){
-                        // cutted right part
-                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size - cut_size, height);
-                      }else{
                         // cutted left part
-                        draw_positive(bar->x + cut_size, bar->y, window_parts_size - cut_size, height);
+                        draw_positive(bar->x, bar->y, window_parts_size - cut_size, height);
+                      }else{
+                        // cutted right part
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated + cut_size, bar->y, window_parts_size - cut_size, height);
                       }
                     }
                     else
                     {
                       if(aim_zone_on_right_side){
-                        // full right part
-                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, height);
-                      }else{
                         // full left part
                         draw_positive(bar->x, bar->y, window_parts_size, height);
+                      }else{
+                        // full right part
+                        draw_positive(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, height);
                       }
                     }
                   }
@@ -1976,7 +1976,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       height = window_bar->height;
 
       if(accel_aim_zone_height.value > 0){
-        draw_positive_nvc(x, ypos_scaled - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - aim_zone_height_scaled / 2 : 0), aim_zone_size_calculated, aim_zone_height_scaled);
+        draw_positive_nvc(x, ypos_scaled - aim_zone_height_scaled - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - aim_zone_height_scaled / 2 : 0), aim_zone_size_calculated, aim_zone_height_scaled);
       }
       else if(accel.integer & ACCEL_LINE_ACTIVE)
       {
@@ -1985,7 +1985,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
         {
           // draw uncovered area
-          draw_positive_nvc(x, window_bar->y + line_height - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - (height - line_height) / 2 : 0), aim_zone_size_calculated, height - line_height);
+          draw_positive_nvc(x, window_bar->y - line_height + (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - (height - line_height) / 2 : 0), aim_zone_size_calculated, height - line_height);
         }
         // draw border line
         set_color_inc_pred(i_color);
@@ -2130,13 +2130,17 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         const float lx = bar->x - edge_size_scaled,
                     rx = bar_tmp->x + bar_tmp->width;
 
-        float ly, ry;
+        float ly = ypos_scaled - lh,
+              ry = ypos_scaled - rh;
+
+        // proximity height -> TODO as feature
 
         if(accel_edge.integer & ACCEL_EDGE_FULL_SIZE){
-          lh = lh * lh;
-          rh = rh * rh;
-          ly = ypos_scaled - lh / 2;
-          ry = ypos_scaled - rh / 2;
+          lh = lh * 2 + zero_gap_scaled; 
+          rh = rh * 2 + zero_gap_scaled;
+
+          // ly = ypos_scaled - lh / 2 + zero_gap_scaled;
+          // ry = ypos_scaled - rh / 2 + zero_gap_scaled;
         }
 
         if(accel_edge.integer & ACCEL_EDGE_VCENTER){
