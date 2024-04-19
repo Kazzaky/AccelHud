@@ -215,6 +215,7 @@ void __wrap_draw_hud(void)
 qboolean trap_GetUserCmd(int32_t cmdNumber, usercmd_t* ucmd)
 #else
 qboolean __wrap_trap_GetUserCmd(int32_t cmdNumber, usercmd_t* ucmd)
+#endif
 {
     qboolean res = __real_trap_GetUserCmd(cmdNumber, ucmd);
 
@@ -228,4 +229,4 @@ qboolean __wrap_trap_GetUserCmd(int32_t cmdNumber, usercmd_t* ucmd)
 
     return res;
 }
-#endif
+
