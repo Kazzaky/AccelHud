@@ -155,7 +155,7 @@ There are three types of predictions: **strafe**, **sidemove** *(vq3 only)* and 
 The cvar name is constructed as follows:\
 `p_accel` - prefix\
 `_p` - "predict"\
-`_strafe` - prediction type (like which move were pressed instead)\
+`_strafe` - prediction type (like which move to draw in addition)\
 *[`strafe` - strafe, `sm` - sidemove, `cj` - crouch/jump]*\
 `_w` - "while" holding key combination (move)\
 `_sm` - the move to activate the prediction\
