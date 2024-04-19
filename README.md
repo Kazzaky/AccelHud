@@ -10,8 +10,8 @@ Please note that the AccelHud is currently only alpha version, might be buggy.
 
 |            | **Windows** | **Linux** | **macOS** |
 | :--------: | :---------: | :-------: | :-------: |
-| **32-bit** | [cgamex86.dll](../../releases/download/v0.2.0/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.2.0/cgamei386.so) |
-| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.2.0/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.2.0/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.2.0/cgamex86_64.dylib) |
+| **32-bit** | [cgamex86.dll](../../releases/download/v0.3.0/cgamex86.dll) | [cgamei386.so](../../releases/download/v0.3.0/cgamei386.so) |
+| **64-bit** | [cgamex86_64.dll](../../releases/download/v0.3.0/cgamex86_64.dll) | [cgamex86_64.so](../../releases/download/v0.3.0/cgamex86_64.so) | [cgamex86_64.dylib](../../releases/download/v0.3.0/cgamex86_64.dylib) |
 
 ## Build / Instalation
 
