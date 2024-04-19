@@ -118,7 +118,7 @@ x X - height of hud (approximate)
 
 #### Offsets:
 `p_accel_p_offset X` - offset of predictions\
-`p_accel_p_cj_offset X` - offset of jump/crunch prediction\
+`p_accel_p_cj_offset X` - offset of crouch/jump prediction\
 `p_accel_vcenter_offset X` - offset added to vertically centered bars (away from condensed line)\
 `p_accel_edge_voffset X` - vertical offset added to edges\
 `p_accel_window_center_voffset X` - vertical offsed added to window center\
