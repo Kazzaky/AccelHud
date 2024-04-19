@@ -143,7 +143,7 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 Xxxx - side while grounded (slick) (A or D)\
 xXxx - forward (W or S)\
 xxXx - side (A or D)\
-xxxX - strafe (WA, WD, SA, SD)\
+xxxX - strafe (WA, WD, SA, SD)
 
 `p_accel_show_move_vq3 0bXXXX` - vq3 specific version of `p_accel_show_move`.
 
