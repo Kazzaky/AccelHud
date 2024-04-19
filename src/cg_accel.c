@@ -232,12 +232,13 @@ static cvarTable_t accel_cvars[] = {
   { &accel_predict_crouchjump_offset, "p_accel_p_cj_offset", "0", CVAR_ARCHIVE_ND },
 
   // enable regular accel graph while holding specific keys
-  { &accel_show_move, "p_accel_show_move", "0b101", CVAR_ARCHIVE_ND },
-  { &accel_show_move_vq3, "p_accel_show_move_vq3", "0b111", CVAR_ARCHIVE_ND },
+  { &accel_show_move, "p_accel_show_move", "0b1101", CVAR_ARCHIVE_ND },
+  { &accel_show_move_vq3, "p_accel_show_move_vq3", "0b1111", CVAR_ARCHIVE_ND },
 
-  #define ACCEL_MOVE_STRAFE   1
-  #define ACCEL_MOVE_SIDE     2
-  #define ACCEL_MOVE_FORWARD  4
+  #define ACCEL_MOVE_STRAFE         1
+  #define ACCEL_MOVE_SIDE           2
+  #define ACCEL_MOVE_FORWARD        4
+  #define ACCEL_MOVE_SIDE_GROUNDED  8
 
   { &accel_p_strafe_w_sm,     "p_accel_p_strafe_w_sm", "0b00", CVAR_ARCHIVE_ND },
   { &accel_p_strafe_w_fm,     "p_accel_p_strafe_w_fm", "0b00", CVAR_ARCHIVE_ND },
@@ -839,8 +840,18 @@ static void PmoveSingle(void)
         ))
       || (!key_forwardmove && key_rightmove // sidemove
         && (
-          (a.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_SIDE))
-          || (!(a.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_SIDE))
+          (a.pm_ps.pm_flags & PMF_PROMODE // cpm
+            && (
+              (!a.pml.walking && !(accel_show_move.integer & ACCEL_MOVE_SIDE))
+              || (a.pml.walking && !(accel_show_move.integer & ACCEL_MOVE_SIDE_GROUNDED))
+            )
+          )
+          || (!(a.pm_ps.pm_flags & PMF_PROMODE) // vq3
+            && (
+              (!a.pml.walking && !(accel_show_move_vq3.integer & ACCEL_MOVE_SIDE))
+              || (a.pml.walking && !(accel_show_move_vq3.integer & ACCEL_MOVE_SIDE_GROUNDED))
+            )
+          )
         ))
       || (key_forwardmove && !key_rightmove // forwardmove
         && (

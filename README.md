@@ -140,7 +140,7 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 ### Moves:
 
 `p_accel_show_move 0bXXXX` - indicate which move will draw regular accel graph, this is good for disabling moves without useful information like sidemove, rest of the hud like predictions still works.\
-Xxxx - no key\
+Xxxx - side while grounded (slick) (A or D)\
 xXxx - forward (W or S)\
 xxXx - side (A or D)\
 xxxX - strafe (WA, WD, SA, SD)\
