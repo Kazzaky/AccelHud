@@ -6,8 +6,6 @@
  * additional licence rules may apply.
  */
 
- // TODO: defrag offset pointers point to the previous snapshot, they are all one frame behind actual data, affect whole proxymode
- // TODO: horizontally center the *_height to bar horizontal center (did i actually ment vertically ?)
  // TODO: refactor aim zone substitution
 
 
@@ -87,12 +85,27 @@ static vmCvar_t accel_condensed_size;
 static vmCvar_t accel_predict_offset;
 static vmCvar_t accel_predict_crouchjump_offset;
 
-static vmCvar_t accel_sidemove;
-static vmCvar_t accel_forward;
-static vmCvar_t accel_nokey;
-static vmCvar_t accel_strafe;
-static vmCvar_t accel_opposite;
-static vmCvar_t accel_crouchjump;
+static vmCvar_t accel_show_move;
+static vmCvar_t accel_show_move_vq3;
+
+static vmCvar_t accel_p_strafe_w_sm;
+static vmCvar_t accel_p_strafe_w_fm;
+static vmCvar_t accel_p_strafe_w_nk;
+static vmCvar_t accel_p_strafe_w_strafe;
+static vmCvar_t accel_p_cj_w_strafe;
+
+static vmCvar_t accel_p_strafe_w_sm_vq3;
+static vmCvar_t accel_p_strafe_w_fm_vq3;
+static vmCvar_t accel_p_strafe_w_nk_vq3;
+static vmCvar_t accel_p_strafe_w_strafe_vq3;
+static vmCvar_t accel_p_cj_w_strafe_vq3;
+static vmCvar_t accel_p_cj_w_sm_vq3;
+
+static vmCvar_t accel_p_sm_w_sm_vq3;
+static vmCvar_t accel_p_sm_w_strafe_vq3;
+static vmCvar_t accel_p_sm_w_fm_vq3;
+static vmCvar_t accel_p_sm_w_nk_vq3;
+
 static vmCvar_t accel_crouchjump_overdraw;
 
 static vmCvar_t accel_mode_neg;
@@ -218,19 +231,35 @@ static cvarTable_t accel_cvars[] = {
   { &accel_predict_offset, "p_accel_p_offset", "30", CVAR_ARCHIVE_ND },
   { &accel_predict_crouchjump_offset, "p_accel_p_cj_offset", "0", CVAR_ARCHIVE_ND },
 
-  { &accel_sidemove, "p_accel_p_sm", "0b000", CVAR_ARCHIVE_ND },
-  { &accel_forward, "p_accel_p_fm", "0b000", CVAR_ARCHIVE_ND },
-  { &accel_nokey, "p_accel_p_nk", "0b000", CVAR_ARCHIVE_ND },
+  // enable regular accel graph while holding specific keys
+  { &accel_show_move, "p_accel_show_move", "0b101", CVAR_ARCHIVE_ND },
+  { &accel_show_move_vq3, "p_accel_show_move_vq3", "0b111", CVAR_ARCHIVE_ND },
 
-#define ACCEL_MOVE_NORMAL           1 // doesn't do anything for the p_strafe, p_opposite and p_cj
+  #define ACCEL_MOVE_STRAFE   1
+  #define ACCEL_MOVE_SIDE     2
+  #define ACCEL_MOVE_FORWARD  4
 
-  { &accel_strafe, "p_accel_p_strafe", "0b000", CVAR_ARCHIVE_ND },
-  { &accel_opposite, "p_accel_p_opposite", "0b000", CVAR_ARCHIVE_ND },
-  { &accel_crouchjump, "p_accel_p_cj", "0b000", CVAR_ARCHIVE_ND },
-  
+  { &accel_p_strafe_w_sm,     "p_accel_p_strafe_w_sm", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_strafe_w_fm,     "p_accel_p_strafe_w_fm", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_strafe_w_nk,     "p_accel_p_strafe_w_nk", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_strafe_w_strafe, "p_accel_p_strafe_w_strafe", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_cj_w_strafe,     "p_accel_p_cj_w_strafe", "0b00", CVAR_ARCHIVE_ND },
 
-#define ACCEL_MOVE_PREDICT          2
-#define ACCEL_MOVE_PREDICT_WINDOW   4
+  { &accel_p_strafe_w_sm_vq3,     "p_accel_p_strafe_w_sm_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_strafe_w_fm_vq3,     "p_accel_p_strafe_w_fm_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_strafe_w_nk_vq3,     "p_accel_p_strafe_w_nk_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_strafe_w_strafe_vq3, "p_accel_p_strafe_w_strafe_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_cj_w_strafe_vq3,     "p_accel_p_cj_w_strafe_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_cj_w_sm_vq3,         "p_accel_p_cj_w_sm_vq3", "0b00", CVAR_ARCHIVE_ND },
+
+  { &accel_p_sm_w_sm_vq3, "p_accel_p_sm_w_sm_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_sm_w_strafe_vq3, "p_accel_p_sm_w_strafe_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_sm_w_fm_vq3, "p_accel_p_sm_w_fm_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &accel_p_sm_w_nk_vq3, "p_accel_p_sm_w_nk_vq3", "0b00", CVAR_ARCHIVE_ND },
+
+
+#define ACCEL_MOVE_PREDICT          1
+#define ACCEL_MOVE_PREDICT_WINDOW   2
 
 
   { &accel_crouchjump_overdraw, "p_accel_p_cj_overdraw", "0", CVAR_ARCHIVE_ND },
@@ -474,12 +503,26 @@ void draw_accel(void)
   accel_trueness.integer  = cvar_getInteger("p_accel_trueness");
   accel_vline.integer     = cvar_getInteger("p_accel_vline");
 
-  accel_sidemove.integer    = cvar_getInteger("p_accel_p_sm");
-  accel_forward.integer     = cvar_getInteger("p_accel_p_fm");
-  accel_nokey.integer       = cvar_getInteger("p_accel_p_nk");
-  accel_strafe.integer      = cvar_getInteger("p_accel_p_strafe");
-  accel_opposite.integer    = cvar_getInteger("p_accel_p_opposite");
-  accel_crouchjump.integer  = cvar_getInteger("p_accel_p_cj");
+  accel_show_move.integer = cvar_getInteger("p_accel_show_move");
+  accel_show_move_vq3.integer = cvar_getInteger("p_accel_show_move_vq3");
+
+  accel_p_strafe_w_sm.integer = cvar_getInteger("p_accel_p_strafe_w_sm");
+  accel_p_strafe_w_fm.integer = cvar_getInteger("p_accel_p_strafe_w_fm");
+  accel_p_strafe_w_nk.integer = cvar_getInteger("p_accel_p_strafe_w_nk");
+  accel_p_strafe_w_strafe.integer = cvar_getInteger("p_accel_p_strafe_w_strafe");
+  accel_p_cj_w_strafe.integer = cvar_getInteger("p_accel_p_cj_w_strafe");
+
+  accel_p_strafe_w_sm_vq3.integer = cvar_getInteger("p_accel_p_strafe_w_sm_vq3");
+  accel_p_strafe_w_fm_vq3.integer = cvar_getInteger("p_accel_p_strafe_w_fm_vq3");
+  accel_p_strafe_w_nk_vq3.integer = cvar_getInteger("p_accel_p_strafe_w_nk_vq3");
+  accel_p_strafe_w_strafe_vq3.integer = cvar_getInteger("p_accel_p_strafe_w_strafe_vq3");
+  accel_p_cj_w_strafe_vq3.integer = cvar_getInteger("p_accel_p_cj_w_strafe_vq3");
+  accel_p_cj_w_sm_vq3.integer = cvar_getInteger("p_accel_p_cj_w_sm_vq3");
+
+  accel_p_sm_w_sm_vq3.integer = cvar_getInteger("p_accel_p_sm_w_sm_vq3");
+  accel_p_sm_w_strafe_vq3.integer = cvar_getInteger("p_accel_p_sm_w_strafe_vq3");
+  accel_p_sm_w_fm_vq3.integer = cvar_getInteger("p_accel_p_sm_w_fm_vq3");
+  accel_p_sm_w_nk_vq3.integer = cvar_getInteger("p_accel_p_sm_w_nk_vq3");
 
   accel_window_grow_limit.integer = cvar_getInteger("p_accel_window_grow_limit");
 
@@ -531,13 +574,6 @@ static void PmoveSingle(void)
                                   (a.pm_ps.stats[13] & PSF_USERINPUT_LEFT) / PSF_USERINPUT_LEFT);
     a.pm.cmd.upmove      = scale * ((a.pm_ps.stats[13] & PSF_USERINPUT_JUMP) / PSF_USERINPUT_JUMP -
                                (a.pm_ps.stats[13] & PSF_USERINPUT_CROUCH) / PSF_USERINPUT_CROUCH);
-  }
-
-  if((accel_nokey.integer == 0 && !a.pm.cmd.forwardmove && !a.pm.cmd.rightmove)
-    || (accel_sidemove.integer == 0 && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
-    || (accel_forward.integer == 0 && a.pm.cmd.forwardmove && !a.pm.cmd.rightmove))
-  {
-    return;
   }
 
   // clear all pmove local vars
@@ -632,30 +668,79 @@ static void PmoveSingle(void)
       key_rightmove = a.pm.cmd.rightmove,
       key_upmove = a.pm.cmd.upmove;
 
-  // predictions (simulate strafe or a/d)
-  if((a.pm_ps.pm_flags & PMF_PROMODE) && accel_sidemove.integer & ACCEL_MOVE_PREDICT && !key_forwardmove && key_rightmove){
-    a.pm.cmd.forwardmove = scale;
-    a.pm.cmd.rightmove   = scale;
-    predict = PREDICT_SM_STRAFE;
-    predict_window = accel_sidemove.integer & ACCEL_MOVE_PREDICT_WINDOW;
-    move();
-    // opposite side
-    a.pm.cmd.rightmove *= -1;
-    move();
-  }
+  // * predictions *
 
-  if((accel_forward.integer & ACCEL_MOVE_PREDICT && key_forwardmove && !key_rightmove)
-      || (accel_nokey.integer & ACCEL_MOVE_PREDICT && !key_forwardmove && !key_rightmove)){
-    a.pm.cmd.forwardmove = scale;
-    a.pm.cmd.rightmove   = scale;
-    predict = PREDICT_FMNK_STRAFE;
-    predict_window = (accel_forward.integer & ACCEL_MOVE_PREDICT && key_forwardmove && !key_rightmove) ? accel_forward.integer & ACCEL_MOVE_PREDICT_WINDOW : accel_nokey.integer & ACCEL_MOVE_PREDICT_WINDOW;
-    move();
-    // opposite side
-    a.pm.cmd.rightmove *= -1;
-    move();
-    // for vq3 additional prediction (case side + forward)
-    if(!(a.pm_ps.pm_flags & PMF_PROMODE)){
+  int fm_case;
+
+  // cpm
+  if(a.pm_ps.pm_flags & PMF_PROMODE)
+  {
+    if(accel_p_strafe_w_sm.integer && !key_forwardmove && key_rightmove){
+      // strafe predict
+      a.pm.cmd.forwardmove = scale;
+      a.pm.cmd.rightmove   = scale;
+      predict = PREDICT_SM_STRAFE;
+      predict_window = accel_p_strafe_w_sm.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      move();
+      // opposite side
+      a.pm.cmd.rightmove *= -1;
+      move();
+    }
+
+    fm_case = accel_p_strafe_w_fm.integer & ACCEL_MOVE_PREDICT && key_forwardmove && !key_rightmove;
+    if(fm_case || (accel_p_strafe_w_nk.integer && !key_forwardmove && !key_rightmove)){
+      // strafe predict
+      a.pm.cmd.forwardmove = scale;
+      a.pm.cmd.rightmove   = scale;
+      predict = PREDICT_FMNK_STRAFE;
+      predict_window = fm_case ? accel_p_strafe_w_fm.integer & ACCEL_MOVE_PREDICT_WINDOW : accel_p_strafe_w_nk.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      move();
+      // opposite side
+      a.pm.cmd.rightmove *= -1;
+      move();
+      // return; // no longer in use as we have show_move
+    }
+
+    // predict same move just opposite side
+    if(accel_p_strafe_w_strafe.integer && key_forwardmove && key_rightmove)
+    {
+      predict_window = accel_p_strafe_w_strafe.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      predict = PREDICT_OPPOSITE;
+      a.pm.cmd.forwardmove = scale; // why not key_forwardmove here ?
+      a.pm.cmd.rightmove = key_rightmove * -1;
+      move();
+    }
+  }
+  else // vq3
+  {
+    if(accel_p_strafe_w_sm_vq3.integer && !key_forwardmove && key_rightmove){
+      // strafe predict
+      a.pm.cmd.forwardmove = scale;
+      a.pm.cmd.rightmove   = scale;
+      predict = PREDICT_SM_STRAFE_ADD;
+      predict_window = accel_p_strafe_w_sm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      move();
+      a.pm.cmd.rightmove *= -1;
+      move();
+    }
+
+    fm_case = accel_p_strafe_w_fm_vq3.integer & ACCEL_MOVE_PREDICT && key_forwardmove && !key_rightmove;
+    if(fm_case || (accel_p_strafe_w_nk_vq3.integer && !key_forwardmove && !key_rightmove)){
+      // strafe predict
+      a.pm.cmd.forwardmove = scale;
+      a.pm.cmd.rightmove   = scale;
+      predict = PREDICT_FMNK_STRAFE;
+      predict_window = fm_case ? accel_p_strafe_w_fm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW : accel_p_strafe_w_nk_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      move();
+      // opposite side
+      a.pm.cmd.rightmove *= -1;
+      move();
+    }
+
+    fm_case = accel_p_sm_w_fm_vq3.integer & ACCEL_MOVE_PREDICT && key_forwardmove && !key_rightmove;
+    if(fm_case || (accel_p_sm_w_nk_vq3.integer && !key_forwardmove && !key_rightmove)){
+      // sidemove predict
+      predict_window = fm_case ? accel_p_sm_w_fm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW : accel_p_sm_w_nk_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
       predict = PREDICT_FMNK_SM;
       a.pm.cmd.forwardmove = 0;
       a.pm.cmd.rightmove   = scale;
@@ -663,75 +748,110 @@ static void PmoveSingle(void)
       a.pm.cmd.rightmove *= -1;
       move();
     }
-    return;
-  }
 
-  // vq3 specific prediction
-  if(!(a.pm_ps.pm_flags & PMF_PROMODE))
-  {
-    if(accel_sidemove.integer & ACCEL_MOVE_PREDICT && !key_forwardmove && key_rightmove){
-      // the strafe predict
-      a.pm.cmd.forwardmove = scale;
-      a.pm.cmd.rightmove   = scale;
-      predict = PREDICT_SM_STRAFE_ADD;
-      predict_window = accel_sidemove.integer & ACCEL_MOVE_PREDICT_WINDOW;
-      move();
-      a.pm.cmd.rightmove *= -1;
+    // predict same move just opposite side
+    if(accel_p_strafe_w_strafe_vq3.integer && key_forwardmove && key_rightmove)
+    {
+      predict_window = accel_p_strafe_w_strafe_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      predict = PREDICT_OPPOSITE;
+      a.pm.cmd.forwardmove = scale; // why not key_forwardmove here ?
+      a.pm.cmd.rightmove = key_rightmove * -1;
       move();
     }
-    // note: both sidemove and strafe predict can be drawn at the same time
-    if(accel_strafe.integer & ACCEL_MOVE_PREDICT && key_forwardmove && key_rightmove){
-      // the sidemove predict
-      a.pm.cmd.forwardmove = 0;
-      a.pm.cmd.rightmove   = scale;
-      predict = PREDICT_STRAFE_SM;
-      predict_window = accel_strafe.integer & ACCEL_MOVE_PREDICT_WINDOW;
-      move();
-      a.pm.cmd.rightmove *= -1;
-      move();
-    }
-  }
 
-  // predict same move just opposite side
-  if(accel_opposite.integer & ACCEL_MOVE_PREDICT)
-  {
-    predict_window = accel_opposite.integer & ACCEL_MOVE_PREDICT_WINDOW;
-    // a/d oposite only for vq3
-    if(!(a.pm_ps.pm_flags & PMF_PROMODE) && !key_forwardmove && key_rightmove){
+    // predict same move just opposite side
+    if(accel_p_sm_w_sm_vq3.integer && !key_forwardmove && key_rightmove)
+    {
+      predict_window = accel_p_sm_w_sm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      // a/d oposite only for vq3
       predict = PREDICT_OPPOSITE;
       a.pm.cmd.forwardmove = 0; // why not key_forwardmove here ?
       a.pm.cmd.rightmove = key_rightmove * -1;
       move();
     }
 
-    if(key_forwardmove && key_rightmove){
-      predict = PREDICT_OPPOSITE;
-      a.pm.cmd.forwardmove = scale; // why not key_forwardmove here ?
-      a.pm.cmd.rightmove = key_rightmove * -1;
+    if(accel_p_sm_w_strafe_vq3.integer && key_forwardmove && key_rightmove){
+      // the sidemove predict
+      a.pm.cmd.forwardmove = 0;
+      a.pm.cmd.rightmove   = scale;
+      predict = PREDICT_STRAFE_SM;
+      predict_window = accel_p_sm_w_strafe_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      move();
+      a.pm.cmd.rightmove *= -1;
       move();
     }
   }
 
-  // predict same move while jumping / crouching // intentionally last to overdraw regular move
-  if(!accel_crouchjump_overdraw.value && accel_crouchjump.integer & ACCEL_MOVE_PREDICT)
-  {
-    predict_window = accel_crouchjump.integer & ACCEL_MOVE_PREDICT_WINDOW;
-    // a/d only for vq3
-    if(!(a.pm_ps.pm_flags & PMF_PROMODE) && !key_forwardmove && key_rightmove){
-      predict = PREDICT_CROUCHJUMP;
-      a.pm.cmd.forwardmove = key_forwardmove;
-      a.pm.cmd.rightmove = key_rightmove;
-      a.pm.cmd.upmove = scale;
-      move();
+  // crouchjump overdraw
+  if(!accel_crouchjump_overdraw.value){
+    LABEL_CJ_OVERDRAW: 
+    // cpm
+    if(a.pm_ps.pm_flags & PMF_PROMODE)
+    {
+      // predict same move while jumping / crouching 
+      if(accel_p_cj_w_strafe.integer && key_forwardmove && key_rightmove)
+      {
+        predict_window = accel_p_cj_w_strafe.integer & ACCEL_MOVE_PREDICT_WINDOW;
+        predict = PREDICT_CROUCHJUMP;
+        a.pm.cmd.forwardmove = key_forwardmove;
+        a.pm.cmd.rightmove = key_rightmove;
+        a.pm.cmd.upmove = scale;
+        move();
+      }
+    }
+    else // vq3
+    {
+      // predict same move while jumping / crouching // following block is doubled with different accel_crouchjump_overdraw after regular move
+      if(accel_p_cj_w_strafe_vq3.integer && key_forwardmove && key_rightmove)
+      {
+        predict_window = accel_p_cj_w_strafe_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+        predict = PREDICT_CROUCHJUMP;
+        a.pm.cmd.forwardmove = key_forwardmove;
+        a.pm.cmd.rightmove = key_rightmove;
+        a.pm.cmd.upmove = scale;
+        move();
+      }
+
+      // predict same move while jumping / crouching // following block is doubled with different accel_crouchjump_overdraw after regular move
+      if(accel_p_cj_w_sm_vq3.integer && !key_forwardmove && key_rightmove)
+      {
+        predict_window = accel_p_cj_w_sm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+        // a/d only for vq3
+        predict = PREDICT_CROUCHJUMP;
+        a.pm.cmd.forwardmove = key_forwardmove;
+        a.pm.cmd.rightmove = key_rightmove;
+        a.pm.cmd.upmove = scale;
+        move();
+      }
     }
 
-    if(key_forwardmove && key_rightmove){
-      predict = PREDICT_CROUCHJUMP;
-      a.pm.cmd.forwardmove = key_forwardmove;
-      a.pm.cmd.rightmove = key_rightmove;
-      a.pm.cmd.upmove = scale;
-      move();
+    if(accel_crouchjump_overdraw.value){
+      // in case we get here by goto overdraw
+      return;
     }
+  }
+
+
+  if((key_forwardmove && key_rightmove // strafe
+        && (
+          (a.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_STRAFE))
+          || (!(a.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_STRAFE))
+        ))
+      || (!key_forwardmove && key_rightmove // sidemove
+        && (
+          (a.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_SIDE))
+          || (!(a.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_SIDE))
+        ))
+      || (key_forwardmove && !key_rightmove // forwardmove
+        && (
+          (a.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_FORWARD))
+          || (!(a.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_FORWARD))
+        ))
+  ){
+    if(accel_crouchjump_overdraw.value){
+      goto LABEL_CJ_OVERDRAW;
+    }
+    return; // -> regular move is disabled
   }
 
   // restore original keys
@@ -743,36 +863,11 @@ static void PmoveSingle(void)
   predict = PREDICT_NONE;
   predict_window = 0;
 
-  // Use default key combination when no user input
-  if (accel_nokey.integer & ACCEL_MOVE_NORMAL && !key_forwardmove && !key_rightmove)
-  {
-    a.pm.cmd.forwardmove = scale;
-    a.pm.cmd.rightmove   = scale;
-  }
-
   // regular move
   move();
-
-  // predict same move while jumping / crouching // intentionally last to overdraw regular move
-  if(accel_crouchjump_overdraw.value && accel_crouchjump.integer & ACCEL_MOVE_PREDICT)
-  {
-    predict_window = accel_crouchjump.integer & ACCEL_MOVE_PREDICT_WINDOW;
-    // a/d only for vq3
-    if(!(a.pm_ps.pm_flags & PMF_PROMODE) && !key_forwardmove && key_rightmove){
-      predict = PREDICT_CROUCHJUMP;
-      a.pm.cmd.forwardmove = key_forwardmove;
-      a.pm.cmd.rightmove = key_rightmove;
-      a.pm.cmd.upmove = scale;
-      move();
-    }
-
-    if(key_forwardmove && key_rightmove){
-      predict = PREDICT_CROUCHJUMP;
-      a.pm.cmd.forwardmove = key_forwardmove;
-      a.pm.cmd.rightmove = key_rightmove;
-      a.pm.cmd.upmove = scale;
-      move();
-    }
+ 
+  if(accel_crouchjump_overdraw.value){
+    goto LABEL_CJ_OVERDRAW;
   }
 }
 

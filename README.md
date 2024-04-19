@@ -137,27 +137,62 @@ x X - height of hud (approximate)
 
 Each value is relative to 640x480 resolution, scaled up to real resolution.
 
-### Moves and predictions:
-`p_accel_p_sm 0bXXX` - while only sidemove (A or D key)\
-`p_accel_p_fm 0bXXX` - while only forwardmove (W key)\
-`p_accel_p_nk 0bXXX` - while no key pressed
+### Moves:
 
-0 - do not draw hud at all\
-Xxx - draw only main window\
-xXx - draw prediction of strafe/sidemove\
-xxX - draw normal
+`p_accel_show_move 0bXXXX` - indicate which move will draw regular accel graph, this is good for disabling moves without useful information like sidemove, rest of the hud like predictions still works.\
+Xxxx - no key\
+xXxx - forward (W or S)\
+xxXx - side (A or D)\
+xxxX - strafe (WA, WD, SA, SD)\
+
+`p_accel_show_move_vq3 0bXXXX` - vq3 specific version of `p_accel_show_move`.
 
 
-`p_accel_p_strafe 0bXXX` - while strafing (WA or WD keys) *only vq3*\
-`p_accel_p_opposite 0bXXX` - the current move just on opposite side\
-`p_accel_p_cj 0bXXX` - the current move with jump/crouch
+### Predictions:
 
+There are three types of predictions: **strafe**, **sidemove** *(vq3 only)* and **crouch/jump**. Each is activated by specific move.
+
+The cvar name is constructed as follows:\
+`p_accel` - prefix\
+`_p` - "predict"\
+`_strafe` - prediction type (like which move were pressed instead)\
+*[`strafe` - strafe, `sm` - sidemove, `cj` - crouch/jump]*\
+`_w` - "while" holding key combination (move)\
+`_sm` - the move to activate the prediction\
+*[`sm` - sidemove, `fm` - forwardmove, `nk` - no key, `strafe` - strafe]*\
+`_vq3` - specific for vq3 physics (*optional - cpm is without suffix*)
+
+
+#### Strafe:
+`p_accel_p_strafe_w_sm 0bXX`\
+`p_accel_p_strafe_w_fm 0bXX`\
+`p_accel_p_strafe_w_nk 0bXX`\
+`p_accel_p_strafe_w_strafe 0bXX`
+
+`p_accel_p_strafe_w_sm_vq3 0bXX`\
+`p_accel_p_strafe_w_fm_vq3 0bXX`\
+`p_accel_p_strafe_w_nk_vq3 0bXX`\
+`p_accel_p_strafe_w_strafe_vq3 0bXX`
+
+#### Sidemove:
+`p_accel_p_sm_w_sm_vq3 0bXX`\
+`p_accel_p_sm_w_strafe_vq3 0bXX`\
+`p_accel_p_sm_w_fm_vq3 0bXX`\
+`p_accel_p_sm_w_nk_vq3 0bXX`
+
+#### Crouch/jump:
+`p_accel_p_cj_w_strafe 0bXX`
+
+`p_accel_p_cj_w_strafe_vq3 0bXX`\
+`p_accel_p_cj_w_sm_vq3 0bXX`
+
+Values for all predictions:\
 0 - do not predict\
-Xxx - draw only main window\
-xXx - draw prediction
+Xx - only main window\
+xX - draw prediction
 
-`p_accel_p_cj_overdraw X` - draw jump/crouch prediction on top of regular move
-
+#### Special:
+`p_accel_p_cj_overdraw X` - draw jump/crouch prediction on top of regular move\
 0 - no\
 1 - yes
 
@@ -236,7 +271,7 @@ Each value is relative to 640x480 resolution, scaled up to real resolution.
 Colors order is: Red Green Blue Alpha, each as value between 0 and 1.\
 For example: `p_cursor_rgba .1 .7 1 .8`.
 
-### Huds draw order
+## Huds draw order:
 
 Each cvar use value between 0-8, in case same value is set the default order is used.
 
@@ -248,12 +283,16 @@ Each cvar use value between 0-8, in case same value is set the default order is 
 `p_jump_draw_order X`\
 `p_timer_draw_order X`\
 `p_accel_draw_order X`\
-`p_cursor_draw_order X`\
+`p_cursor_draw_order X`
 
 For example if you want to draw snap hud on top of accel hud, just make sure the `p_snap_draw_order` have greater value then `p_accel_draw_order`.
-\
-\
-You can use accelhud-minimal.cfg as default config, or accelhud.cfg as demo config with prediction, or cursor.cfg (together with cursor.tga), copy that file(s) into your /defrag folder, then run following command in your game console: `exec accelhud.cfg`, you can add this command into your autoexec.cfg to make the config load permanent.
+
+## Special:
+`p_flickfree X` - fixes flickering issue of cgaz, snap and accel at first frame after user input changes.
+
+
+## Configs:
+In repository root you can find some configs like **accelhud-minimal.cfg**, **accelhud.cfg**, **accelhud-palme.cfg**, **cursor.cfg** (use this one together with cursor.tga). Try them out, copy that file(s) into your /defrag folder, then run following command in your game console: `exec filename`, you can add this command into your autoexec.cfg to make the config load permanent.
 \
 \
 \

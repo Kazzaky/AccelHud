@@ -3,6 +3,7 @@
 #include "cg_cursor.h"
 #include "cg_cvar.h"
 #include "cg_local.h"
+#include "cg_utils.h"
 
 #include "compass.h"
 #include "cg_cgaz.h"
@@ -18,6 +19,9 @@
 extern void __real_init_hud(void);
 extern void __real_update_hud(void);
 extern void __real_draw_hud(void);
+extern qboolean __real_trap_GetUserCmd(int32_t, usercmd_t*);
+
+static vmCvar_t flickfree;
 
 static vmCvar_t accel_draw_order;
 static vmCvar_t compass_draw_order;
@@ -101,6 +105,7 @@ void init_hud(void)
 void __wrap_init_hud(void)
 #endif
 {
+    trap_Cvar_Register(&flickfree, "p_flickfree", "1", CVAR_ARCHIVE_ND);
     init_cvars(draw_order_cvars, ARRAY_LEN(draw_order_cvars));
     __real_init_hud();
     init_accel();
@@ -117,6 +122,9 @@ void update_hud(void)
 void __wrap_update_hud(void)
 #endif
 {
+    trap_Cvar_Update(&flickfree);
+    flickfree.integer = cvar_getInteger("p_flickfree");
+
     update_cvars(draw_order_cvars, ARRAY_LEN(draw_order_cvars));
     __real_update_hud();
 
@@ -202,3 +210,22 @@ void __wrap_draw_hud(void)
     // __real_draw_hud(); // original draw_hud function is no longer used
     // draw_accel();
 }
+
+#if __APPLE__
+qboolean trap_GetUserCmd(int32_t cmdNumber, usercmd_t* ucmd)
+#else
+qboolean __wrap_trap_GetUserCmd(int32_t cmdNumber, usercmd_t* ucmd)
+{
+    qboolean res = __real_trap_GetUserCmd(cmdNumber, ucmd);
+
+    if(flickfree.integer && res)
+    {
+        int8_t const scale = getPs()->stats[13] & PSF_USERINPUT_WALK ? 64 : 127;
+        ucmd->forwardmove = ucmd->forwardmove < 0 ? -scale : (ucmd->forwardmove > 0 ? scale : 0);
+        ucmd->rightmove = ucmd->rightmove < 0 ? -scale : (ucmd->rightmove > 0 ? scale : 0);
+        ucmd->upmove = ucmd->upmove < 0 ? -scale : (ucmd->upmove > 0 ? scale : 0);
+    }
+
+    return res;
+}
+#endif

@@ -1,4 +1,16 @@
 # Changelog
+## [Alpha v0.3.0]
+### Fixed
+- Moves ignored draw option, which are now extra as `p_accel_show_move`.
+
+### Updated
+- Predictions cvars are renamed and reworked, more explicit but less confusing see readme.
+
+### Added
+- Separated prediction setting for vq3 physics.
+- New cvar `p_flickfree` which fix issue with partical user input commands, the first frame after user input change were way off causing flickering. Affect huds: accel, snap and cgaz.
+
+
 ## [Alpha v0.2.0]
 ### Fixed
 - Edges near / far were flipped.
