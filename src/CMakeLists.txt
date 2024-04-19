@@ -15,8 +15,15 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
         VERBATIM
     )
 
+    add_custom_command(OUTPUT
+        ${CMAKE_BINARY_DIR}/cg_syscall.c.o
+        COMMAND ${OBJCOPY_CMD} --redefine-sym _trap_GetUserCmd=___real_trap_GetUserCmd ../cgame_proxymod/src/CMakeFiles/cgame_obj.dir/cg_syscall.c.o
+        DEPENDS cgame_obj
+        VERBATIM
+    )
+
     add_custom_target(cgame_obj_mod ALL
-        DEPENDS ${CMAKE_BINARY_DIR}/cg_hud.c.o
+        DEPENDS ${CMAKE_BINARY_DIR}/cg_hud.c.o, ${CMAKE_BINARY_DIR}/cg_syscall.c.o
     )
 
     add_dependencies(${BINARY_NAME} cgame_obj_mod)
