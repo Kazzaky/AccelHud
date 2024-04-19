@@ -292,7 +292,7 @@ For example if you want to draw snap hud on top of accel hud, just make sure the
 
 
 ## Configs:
-In repository root is folder (configs-example)[./configs-example] with configs you can try out. Copy them into your `/defrag` folder, then run following command in your game console: `exec filename`, you can add this command into your autoexec.cfg to make the config load permanent.
+In repository root is folder (config-example)[config-example] with configs you can try out. Copy them into your `/defrag` folder, then run following command in your game console: `exec filename`, you can add this command into your autoexec.cfg to make the config load permanent.
 \
 \
 \
