@@ -1586,9 +1586,9 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     }
   }
   
-  if(center_bar){
-    trap_Print(vaf("center_bar->height: %.3f, center_bar->value: %.3f, center_bar->polarity: %i\n", center_bar->height, center_bar->value, center_bar->polarity));
-  }
+  // if(center_bar){
+  //   trap_Print(vaf("center_bar->height: %.3f, center_bar->value: %.3f, center_bar->polarity: %i\n", center_bar->height, center_bar->value, center_bar->polarity));
+  // }
 
   // default after merge
   start_origin = start;
