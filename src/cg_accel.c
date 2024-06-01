@@ -1407,7 +1407,15 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   //   normalizer *= 11.72f; // 30.f * 1.41421356237f;
   // }
   // * replaced with reworked version:
-  normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -1*0.00025f*VectorLength2(a.pm_ps.velocity)+1.75f);
+
+  float norm_speed = VectorLength2(a.pm_ps.velocity);
+  // dynamic normalizer breaks at 7000ups (value goes negative at this point), since this is a approximation, we can't make it bullet proof, hence this hotfix:
+  if(norm_speed > 6000){
+    norm_speed = 6000;
+  }
+  // there is side effect of the approximation and that is changing height profile based on speed, which falsefully give impression that accel is actually higher while it isn't
+  // the trueness static boost for those who want real (accurate) height
+  normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -1*0.00025f*norm_speed+1.75f);
   if(move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK){
     normalizer *= 15.f;// 38.4f * 1.41421356237f;
   }
@@ -1578,6 +1586,10 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     }
   }
   
+  if(center_bar){
+    trap_Print(vaf("center_bar->height: %.3f, center_bar->value: %.3f, center_bar->polarity: %i\n", center_bar->height, center_bar->value, center_bar->polarity));
+  }
+
   // default after merge
   start_origin = start;
   end_origin = end;
