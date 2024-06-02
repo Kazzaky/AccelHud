@@ -132,7 +132,7 @@ jobs:
 
   macos:
     name: ${{ matrix.config }} macOS 64-bit (${{ matrix.c }})
-    runs-on: macos-latest
+    runs-on: macos-13
     strategy:
       fail-fast: false
       matrix:
