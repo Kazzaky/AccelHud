@@ -68,8 +68,6 @@ jobs:
       with:
         name: ${{ matrix.name }}.dll
         path: bin/*.dll
-        pattern: artifact-*
-        merge-multiple: true
         if-no-files-found: error
         retention-days: 5
 
