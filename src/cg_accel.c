@@ -8,7 +8,6 @@
 
  // TODO: refactor aim zone substitution
 
-
 #include <float.h>
 #include <stdlib.h>
 
@@ -20,8 +19,6 @@
 #include "cg_cvar.h"
 #include "cg_local.h"
 #include "cg_utils.h"
-
-// #include "cg_syscall.h"
 
 #include "common.h"
 #include "q_shared.h"
@@ -414,7 +411,7 @@ typedef struct graph_bar_ {
 
 #define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded
 
-static graph_bar accel_graph[GRAPH_MAX_RESOLUTION]; //only one graph is plotted at a time           //*// *5]; // regular + prediction other + prediction left + prediction right + prediction crouch, i know its insane but for the sake to not overflow 
+static graph_bar accel_graph[GRAPH_MAX_RESOLUTION]; // only one graph is plotted at a time
 static int accel_graph_size;
 
 static int resolution;
@@ -456,13 +453,7 @@ static int predict;
 static int predict_window;
 static int order;
 
-//static int velocity_unchanged;
-
 static int color_alternate;
-
-// unused
-// static graph_bar cur_move_window_bar;
-// static const graph_bar null_bar; // used to reset cur_move_window_bar
 
 typedef struct
 {
@@ -481,7 +472,6 @@ static accel_t a;
 void init_accel(void)
 {
   init_cvars(accel_cvars, ARRAY_LEN(accel_cvars));
-  //init_help(accel_help, ARRAY_LEN(accel_help));
 }
 
 
@@ -579,8 +569,6 @@ static void PmoveSingle(void)
 
   // clear all pmove local vars
   memset(&a.pml, 0, sizeof(a.pml));
-
-  //velocity_unchanged = VectorCompare(a.pm_ps.velocity, a.pml.previous_velocity);
 
   // save old velocity for crashlanding
   VectorCopy(a.pm_ps.velocity, a.pml.previous_velocity);
@@ -1091,89 +1079,6 @@ inline static float angle_short_radial_distance(float a_, float b_)
     return d < -M_PI ? d + 2 * M_PI : d;
 }
 
-// * original replaced by reworked
-// static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, /*vec3_t accel_out,*/ int verbose){
-//   int			i;
-//   float		addspeed, accelspeed, currentspeed, accelspeed_delta;
-//   vec3_t  velpredict;
-//   (void)verbose;
-
-//   vec3_t velocity;
-//   VectorCopy(a.pm_ps.velocity, velocity);
-
-//   Sys_SnapVector(velocity); // solves bug in spectator mode
-
-//   #if ACCEL_DEBUG
-//     if(verbose && accel_verbose.value){
-//       trap_Print(vaf("velocity[0] = %.5f, velocity[1] = %.5f, velocity[2] = %.5f\n", velocity[0], velocity[1], velocity[2]));
-//     }
-//     if(verbose && accel_verbose.value){
-//       trap_Print(vaf("wishdir[0] = %.5f, wishdir[1] = %.5f, wishdir[2] = %.5f\n", wishdir[0], wishdir[1], wishdir[2]));
-//     }
-//   #endif // ACCEL_DEBUG
-
-//   currentspeed = DotProduct (velocity, wishdir); // the velocity speed part regardless the wish direction
-//   #if ACCEL_DEBUG
-//     if(verbose && accel_verbose.value){
-//       trap_Print(vaf("accel_ = %.3f, curs = %.3f, wishs = %.3f", accel_, currentspeed, wishspeed));
-//     }
-//   #endif // ACCEL_DEBUG
-//   addspeed = wishspeed - currentspeed;
-//   #if ACCEL_DEBUG
-//     if(verbose && accel_verbose.value){
-//       if (addspeed <= 0) {
-//         trap_Print(vaf(", adds = %.3f clip !, accs = NaN, delta = NaN\n", addspeed));
-//       }else{
-//         trap_Print(vaf(", adds = %.3f", addspeed));
-//       }
-//     }
-//   #endif // ACCEL_DEBUG
-//   if (addspeed <= 0) {
-//       return 0;
-//   }
-//   accelspeed = accel_*pm_frametime*wishspeed; // fixed pmove
-//   #if ACCEL_DEBUG
-//     if(verbose && accel_verbose.value){
-//       if (accelspeed > addspeed) {
-//         trap_Print(vaf(", accs = %.3f clip !", accelspeed));
-//       }else{
-//         trap_Print(vaf(", accs = %.3f", accelspeed));
-//       }
-//     }
-//   #endif // ACCEL_DEBUG
-//   if (accelspeed > addspeed) {
-//       accelspeed = addspeed;
-//   }
-
-//   VectorCopy(velocity, velpredict);
-    
-//   for (i=0 ; i<2 ; i++) {
-//     velpredict[i] += accelspeed*wishdir[i];
-//   }
-
-//   vec3_t veltmp;
-//   VectorCopy(velpredict, veltmp);
-
-
-
-//   // add snapping to predict velocity vector
-//   Sys_SnapVector(velpredict);
-  
-//   accelspeed_delta = VectorLength2(velpredict) - VectorLength2(velocity);
-
-//   #if ACCEL_DEBUG
-//     if(verbose && accel_verbose.value){
-//       trap_Print(vaf(", delta = %.5f\n", accelspeed_delta));
-    
-//       trap_Print(vaf("velpredict[0] = %.5f, velpredict[1] = %.5f, velpredict[2] = %.5f\n", velpredict[0], velpredict[1], velpredict[2]));
-//       trap_Print(vaf("veltmp[0] = %.5f, veltmp[1] = %.5f, veltmp[2] = %.5f\n", veltmp[0], veltmp[1], veltmp[2]));
-//     }
-//   #endif //ACCEL_DEBUG
-
-//   return accelspeed_delta;
-// }
-
-
 /*
 ==================
 PM_Friction
@@ -1295,7 +1200,7 @@ static void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbou
 
 // the function to calculate delta
 // does not modify a.pm_ps.velocity (not sure anymore since its edited to be used in old version)
-static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, /*vec3_t accel_out,*/ int verbose){
+static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, int verbose){
   int			i;
   float		addspeed, accelspeed, currentspeed;//, delta;
   vec3_t  velpredict;
@@ -1314,9 +1219,6 @@ static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float 
   addspeed = wishspeed - currentspeed;
 
   if (addspeed <= 0) {
-    // delta_out->combined = 0;
-    // delta_out->forward = 0;
-    // delta_out->side = 0;
     return 0;
   }
 
@@ -1389,25 +1291,10 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   graph_bar *bar, *bar_adj, *bar_tmp, *window_bar = NULL, *center_bar = NULL;
   graph_bar *it, *start, *end, *start_origin, *end_origin; // end is included in loop
 
-  //const float spike_threshold = resolution_ratio + 0.01f;
-
-  // if(accel.integer & ACCEL_ZEROLINE){
-  //   trap_R_SetColor(a.graph_rgba[RGBA_I_ZEROLINE]);
-  //   trap_R_DrawStretchPic(0, ypos_scaled, cgs.glconfig.vidWidth, 1 * cgs.screenXScale, 0, 0, 0, 0, cgs.media.whiteShader);
-  // }
-
+  
   // theoretical maximum is: addspeed * sin(45) * 2, but in practice its way less
   // hardcoded for now
   // inacurate approximation
-  // normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -1*0.00025f*VectorLength2(a.pm_ps.velocity)+1.75f);
-  // if(a.pml.walking){
-  //   normalizer *= 15.f;// 38.4f * 1.41421356237f;
-  // }
-  // else if (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove && accel_trueness.integer & ACCEL_TN_CPM && a.pm_ps.pm_flags & PMF_PROMODE){
-  //   normalizer *= 11.72f; // 30.f * 1.41421356237f;
-  // }
-  // * replaced with reworked version:
-
   float norm_speed = VectorLength2(a.pm_ps.velocity);
   // dynamic normalizer breaks at 7000ups (value goes negative at this point), since this is a approximation, we can't make it bullet proof, hence this hotfix:
   if(norm_speed > 6000){
@@ -1419,14 +1306,6 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   if(move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK){
     normalizer *= 15.f;// 38.4f * 1.41421356237f;
   }
-
-  // doesn't make sense anymore, from now on we draw / calculte every time
-  // if(!velocity_unchanged)
-  // {
-    // reset
-  // if(!predict){
-  //   cur_move_window_bar = null_bar;
-  // }
 
   // recalculate the graph
   accel_graph_size = 0;
@@ -1579,16 +1458,17 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   for(it = start; it && it != end->next; it = it->next)
   {
     bar = it;
-    //trap_Print(vaf("bar->angle: %.3f, bar->width: %.3f, angle+widthangle: %.3f, center_angle: %.3f\n", bar->angle, bar->width, (bar->angle + (bar->width / resolution_ratio) * x_angle_ratio), center_angle));
     if(is_angle_within_bar(bar, center_angle)){
       center_bar = bar;
       break;
     }
   }
   
-  // if(center_bar){
-  //   trap_Print(vaf("center_bar->height: %.3f, center_bar->value: %.3f, center_bar->polarity: %i\n", center_bar->height, center_bar->value, center_bar->polarity));
-  // }
+  #if ACCEL_DEBUG
+  if(accel_verbose.value && center_bar){
+    trap_Print(vaf("center_bar->height: %.3f, center_bar->value: %.3f\n", center_bar->height, center_bar->value));
+  }
+  #endif
 
   // default after merge
   start_origin = start;
@@ -1719,10 +1599,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     }
   }
 
-
-
   // *** draw ***
-
   // actual drawing si done here, for each bar in graph
   for(it = start; it && it != end->next; it = it->next)
   {
@@ -2030,16 +1907,13 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           // if border does not cover whole area, draw rest of the bar
           if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
           {
-            // draw uncovered area
-            //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled, bar->width, height - line_height, 0, 0, 0, 0, cgs.media.whiteShader);  
+            // draw uncovered area 
             draw_negative_vc(bar->x, bar->y - line_height, bar->width, height - line_height, height);
           }
           set_color_inc_pred(i_color);
-          //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled + (height - line_height), bar->width, line_height, 0, 0, 0, 0, cgs.media.whiteShader);
           draw_negative_vc(bar->x, bar->y, bar->width, line_height, height);
         }
         else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
-          //trap_R_DrawStretchPic(bar->x, ypos_scaled + zero_gap_scaled, bar->width, height, 0, 0, 0, 0, cgs.media.whiteShader);
           draw_negative(bar->x, bar->y, bar->width, height);
         }
       } // zero bars are separated
@@ -2162,8 +2036,6 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
             float cut_size = aim_zone_size_calculated - window_parts_size;
 
-            // trap_Print(vaf("y_target: %.3f, ypos_scaled: %.3f, vcenter_offset_scaled: %.3f, height: %.3f\n", y_target, ypos_scaled, vcenter_offset_scaled, height));
-
             if(aim_zone_on_right_side){
               draw_positive_nvc(window_bar->x + window_parts_size, y_target, window_center_size_calculated - cut_size, height);
             }
@@ -2204,7 +2076,6 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
       const float x = window_bar->x + aim_zone_offset;
 
-      //height = ypos_scaled - window_bar->y;
       height = window_bar->height;
 
       if(accel_aim_zone_height.value > 0){
@@ -2236,7 +2107,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       // else
       if(accel.integer & ACCEL_LINE_ACTIVE)
       {
-        line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
+        line_height = (height > line_size_scaled ? line_size_scaled : height);
         // if border does not cover whole area, draw rest of the bar
         if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
         {
@@ -2314,8 +2185,6 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         }
 
         // special handling for single positive bar ?
-        // float test = angle_short_radial_distance(vel_angle, yaw + bar->angle);
-        // trap_Print(vaf("test: %.3f, vel_angle: %.3f, bar_angle: %.3f, yaw: %.3f\n", test, vel_angle, bar->angle + yaw, yaw));
 
         if(angle_short_radial_distance(vel_angle, yaw + bar->angle) < 0){
           i_color = RGBA_I_EDGE_NEAR;
@@ -2351,32 +2220,11 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         {
           lh = bar->height;
           rh = bar_tmp->height;
-          
-          // left
-          //draw_positive(bar->x - edge_size_scaled, bar->y, edge_size_scaled, bar->height); // ypos_scaled - bar->y
-
-          // right
-          //draw_positive(bar_tmp->x + bar_tmp->width, bar_tmp->y, edge_size_scaled, bar_tmp->height); // ypos_scaled - bar_tmp->y
         }
         else if(accel.integer & ACCEL_LINE_ACTIVE)
         {
           lh = bar->height > line_size_scaled ? line_size_scaled : bar->height;
           rh = bar_tmp->height > line_size_scaled ? line_size_scaled : bar_tmp->height;
-
-
-          // // left
-          // // height = ypos_scaled - bar->y;
-          // height = bar->height;
-
-          // line_height = (height > line_size_scaled ? line_size_scaled : height);
-          // draw_positive(bar->x - edge_size_scaled, bar->y, edge_size_scaled, line_height);
-
-          // // right
-          // // height = ypos_scaled - bar_tmp->y;
-          // height = bar_tmp->height;
-
-          // line_height = (height > line_size_scaled ? line_size_scaled : height);
-          // draw_positive(bar_tmp->x + bar_tmp->width, bar_tmp->y, edge_size_scaled, line_height);
         }
         else // no need to draw anything in the rest of the cases
         {
@@ -2397,9 +2245,6 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         if(accel_edge.integer & ACCEL_EDGE_FULL_SIZE){
           lh = lh * 2 + zero_gap_scaled; 
           rh = rh * 2 + zero_gap_scaled;
-
-          // ly = ypos_scaled - lh / 2 + zero_gap_scaled;
-          // ry = ypos_scaled - rh / 2 + zero_gap_scaled;
         }
 
         if(((accel_edge.integer & ACCEL_EDGE_VCENTER_FORCE) && (accel_edge.integer & ACCEL_EDGE_VCENTER))
@@ -2470,51 +2315,6 @@ static void PM_SlickAccelerate(const vec3_t wishdir, float const wishspeed, floa
 }
 
 
-// * original replaced with reworked version
-// /*
-// ===================
-// PM_AirMove
-
-// ===================
-// */
-// static void PM_AirMove( void ) {
-//   int			i;
-//   vec3_t		wishvel;
-//   vec3_t		wishdir;
-//   float		wishspeed;
-//   float		scale;
-
-
-//   scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
-//     PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
-//     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
-
-//   // project moves down to flat plane
-//   a.pml.forward[2] = 0;
-//   a.pml.right[2] = 0;
-//   VectorNormalize (a.pml.forward);
-//   VectorNormalize (a.pml.right);
-
-//   for ( i = 0 ; i < 2 ; i++ ) {
-//       wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove;
-//   }
-//   wishvel[2] = 0;
-
-//   VectorCopy (wishvel, wishdir);
-//   wishspeed = VectorNormalize(wishdir);
-//   wishspeed *= scale;
-
-//   // not on ground, so little effect on velocity
-//   if ((a.pm_ps.pm_flags & PMF_PROMODE) && (accel_trueness.integer & ACCEL_TN_CPM) && (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove))
-//   {
-//     PM_Accelerate(wishdir, wishspeed > cpm_airwishspeed ? cpm_airwishspeed : wishspeed, cpm_airstrafeaccelerate);
-//   }
-//   else
-//   {
-//     PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
-//   }
-// }
-
 /*
 ===================
 PAL_AirMove
@@ -2564,101 +2364,6 @@ static void PM_AirMove( void ) {
     PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
   }
 }
-
-// * original replaced with reworked version
-// /*
-// ===================
-// PM_WalkMove
-
-// ===================
-// */
-// static void PM_WalkMove( void ) {
-//     int			i;
-//     vec3_t		wishvel;
-//     vec3_t		wishdir;
-//     float		wishspeed;
-//     float		scale;
-
-//     if ( a.pm.waterlevel > 2 && DotProduct( a.pml.forward, a.pml.groundTrace.plane.normal ) > 0 ) {
-//         // begin swimming
-//         // PM_WaterMove();
-//         return;
-//     }
-
-//     if (PM_CheckJump(&a.pm, &a.pm_ps, &a.pml)) {
-//         // jumped away
-//         if ( a.pm.waterlevel > 1 ) {
-//             //PM_WaterMove();
-//         } else {
-//             PM_AirMove();
-//         }
-//         return;
-//     }
-
-//     scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH ?
-//     PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
-//     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
-
-//     // project moves down to flat plane
-//     a.pml.forward[2] = 0;
-//     a.pml.right[2] = 0;
-
-//     // project the forward and right directions onto the ground plane
-//     PM_ClipVelocity (a.pml.forward, a.pml.groundTrace.plane.normal, a.pml.forward, OVERCLIP );
-//     PM_ClipVelocity (a.pml.right, a.pml.groundTrace.plane.normal, a.pml.right, OVERCLIP );
-//     //
-//     VectorNormalize (a.pml.forward); // exactly 1 unit in space facing forward based on cameraview
-//     VectorNormalize (a.pml.right); // exactly 1 unit in space facing right based on cameraview
-
-//     for ( i = 0 ; i < 2 ; i++ ) {
-//         wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove; // added fractions of direction (the camera once) increased over move (127 run speed)
-//     }
-//     // when going up or down slopes the wish velocity should Not be zero // but its value doesnt come from anywhere here so wtf...
-//     wishvel[2] = 0;
-
-//     VectorCopy (wishvel, wishdir);
-//     wishspeed = VectorNormalize(wishdir); 
-//     wishspeed *= scale;
-
-//     // clamp the speed lower if ducking
-//     if ( a.pm_ps.pm_flags & PMF_DUCKED ) {
-//         if ( wishspeed > a.pm_ps.speed * pm_duckScale ) {
-//             wishspeed = a.pm_ps.speed * pm_duckScale;
-//         }
-//     }
-
-//     // clamp the speed lower if wading or walking on the bottom
-//     if ( a.pm.waterlevel ) {
-//         float	waterScale;
-
-//         waterScale = a.pm.waterlevel / 3.0f;
-//         waterScale = 1.0f - ( 1.0f - pm_swimScale ) * waterScale;
-//         if ( wishspeed > a.pm_ps.speed * waterScale ) {
-//             wishspeed = a.pm_ps.speed * waterScale;
-//         }
-//     }
-
-//   //when a player gets hit, they temporarily lose
-//   // full control, which allows them to be moved a bit
-//   if (accel_trueness.integer & ACCEL_TN_GROUND)
-//   {
-//     if (a.pml.groundTrace.surfaceFlags & SURF_SLICK || a.pm_ps.pm_flags & PMF_TIME_KNOCKBACK)
-//     {
-//       PM_SlickAccelerate(wishdir, wishspeed, a.pm_ps.pm_flags & PMF_PROMODE ? cpm_slickaccelerate : pm_slickaccelerate);
-//     }
-//     else
-//     {
-//       // don't reset the z velocity for slopes
-//       // s.pm_ps.velocity[2] = 0;
-//       PM_Accelerate(wishdir, wishspeed, a.pm_ps.pm_flags & PMF_PROMODE ? cpm_accelerate : pm_accelerate);
-//     }
-//   }
-//   else
-//   {
-//     PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
-//   }
-// }
-
 
 
 /*
@@ -2739,7 +2444,7 @@ static void PM_WalkMove( void ) {
     }
   }
 
-  //when a player gets hit, they temporarily lose
+  // when a player gets hit, they temporarily lose
   // full control, which allows them to be moved a bit
   move_type = MOVE_WALK;
   if (accel_trueness.integer & ACCEL_TN_GROUND)
