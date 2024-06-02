@@ -248,7 +248,7 @@ For example: `p_accel_rgba .2 .9 .2 .6`.
 Values can range from -1 to 1, for example `p_accel_p_strafe_rgbam -.2 -.1 .2 -.2` would make of
 `p_accel_rgba .2 .9 .2 .6` new color: `0 .8 .4 .4`.
 
-### Cursor:
+## Cursor:
 
 `p_cursor 0bXXXX`\
 Xxxx - use custom image\
@@ -256,16 +256,16 @@ xXxx - draw top and bottom line\
 xxXx - double the vertical size, y coord point to middle\
 xxxX - draw basic cursor
 
-`p_cursor_custom_tga X` - tga image or shader resource filepath (withought file extension), which is looked up in all pk3 and filesystem
+`p_cursor_custom_tga X` - tga image or shader resource filepath (without file extension), which is looked up in all pk3 and filesystem
 
-## Cursor proportions:
+### Cursor proportions:
 `p_cursor_line_size X` - size of the lines\
 `p_cursor_yhw X X X` - y coords, height and width\
 `p_cursor_offset X X` - x y coords offset
 
 Each value is relative to 640x480 resolution, scaled up to real resolution.
 
-## Cursor colors:
+### Cursor colors:
 `p_cursor_rgba X X X X` - cursor color
 
 Colors order is: Red Green Blue Alpha, each as value between 0 and 1.\
