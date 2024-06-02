@@ -66,7 +66,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: matrix.c == 'clang' && matrix.config == 'Release'
       with:
-        name: artifact-${{ matrix.name }}
+        name: ${{ matrix.name }}.dll
         path: bin/*.dll
         pattern: artifact-*
         merge-multiple: true
@@ -127,10 +127,8 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: matrix.c == 'clang' && matrix.config == 'Release'
       with:
-        name: artifact-${{ matrix.name }}
+        name: ${{ matrix.name }}.so
         path: bin/*.so
-        pattern: artifact-*
-        merge-multiple: true
         if-no-files-found: error
         retention-days: 5
 
@@ -192,9 +190,7 @@ jobs:
     - uses: actions/upload-artifact@v4
       if: matrix.c == 'clang' && matrix.config == 'Release'
       with:
-        name: artifact-${{ matrix.name }}
+        name: cgamex86_64.dylib
         path: bin/*.dylib
-        pattern: artifact-*
-        merge-multiple: true
         if-no-files-found: error
         retention-days: 5
