@@ -1,4 +1,8 @@
 # Changelog
+## [Alpha v0.3.1]
+### Fixed
+- While using dynamic acceleration value correction the hud disapear at speeds over 7000ups, now since 6000ups its no longer dynamic.
+
 ## [Alpha v0.3.0]
 ### Fixed
 - Moves ignored draw option, which are now extra as `p_accel_show_move`.

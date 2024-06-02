@@ -1,5 +1,5 @@
 
-target_sources(cgame_obj PRIVATE cg_cursor.c cg_accel.c cg_main_e.c common.c)
+target_sources(cgame_obj PRIVATE cg_cursor.c cg_accel.c cg_hud_e.c common.c)
 target_include_directories(cgame_obj PUBLIC ../include)
 target_include_directories(cgame_obj PRIVATE ../cgame_proxymod/src)
 

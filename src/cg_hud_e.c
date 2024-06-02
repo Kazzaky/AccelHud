@@ -1,4 +1,4 @@
-#include "cg_main_e.h"
+#include "cg_hud_e.h"
 #include "cg_accel.h"
 #include "cg_cursor.h"
 #include "cg_cvar.h"
