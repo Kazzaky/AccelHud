@@ -2196,7 +2196,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         }
 
         // get edges height per case
-        float lh, rh;
+        float lh = 0, rh = 0;
 
         if(accel_edge_height.value > 0){
           if(accel_edge.integer & ACCEL_EDGE_RELATIVE_HEIGHT){
