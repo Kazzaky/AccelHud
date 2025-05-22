@@ -9,6 +9,8 @@
  // TODO: refactor aim zone substitution
 
 #include <float.h>
+#include <initializer_list>
+#include <math.h>
 #include <stdlib.h>
 
 #include "cg_accel.h"
@@ -16,107 +18,65 @@
 #include "accel_version.h"
 
 #include "bg_pmove.h"
-#include "cg_cvar.h"
+#include "cg_tcvar.h"
 #include "cg_local.h"
 #include "cg_utils.h"
 
 #include "common.h"
+#include "q_assert.h"
 #include "q_shared.h"
 
 #define ACCEL_DEBUG 0
 
-#define _ColorClip(a)          ((a)[0] = fmax(fmin((a)[0],1),-1), (a)[1] = fmax(fmin((a)[1],1),-1), (a)[2] = fmax(fmin((a)[2],1),-1), (a)[3] = fmax(fmin((a)[3],1),-1))
-#define ColorAdd(a, b, c)      ((c)[0] = (a)[0] + (b)[0], (c)[1] = (a)[1] + (b)[1], (c)[2] = (a)[2] + (b)[2], (c)[3] = (a)[3] + (b)[3], _ColorClip(c))
+
+// **** cvars ****
 
 static vmCvar_t accel;
+static vmCvar_t version;
 static vmCvar_t accel_trueness;
 static vmCvar_t accel_min_speed;
 static vmCvar_t accel_base_height;
 static vmCvar_t accel_max_height;
-static vmCvar_t accel_vcenter_offset;
 static vmCvar_t accel_yh;
+static vmCvar_t accel_neg_mode;
 
-static vmCvar_t accel_rgba;
-static vmCvar_t accel_window_rgba;
-static vmCvar_t accel_window_hl_rgba;
-static vmCvar_t accel_alt_rgba;
-static vmCvar_t accel_neg_rgba;
-static vmCvar_t accel_near_edge_rgba;
-static vmCvar_t accel_far_edge_rgba;
-static vmCvar_t accel_hl_rgba;
-static vmCvar_t accel_hl_neg_rgba;
-static vmCvar_t accel_hl_g_adj_rgba;
-static vmCvar_t accel_current_rgba;
+static vmCvar_t accel_neg_offset;
+static vmCvar_t accel_vcenter_offset;
+static vmCvar_t accel_p_offset;
+static vmCvar_t accel_p_cj_offset;
 
-static vmCvar_t accel_line_rgba;
-static vmCvar_t accel_line_alt_rgba;
-static vmCvar_t accel_line_neg_rgba;
-static vmCvar_t accel_line_hl_rgba;
-static vmCvar_t accel_line_hl_neg_rgba;
-static vmCvar_t accel_line_hl_g_adj_rgba;
-
-static vmCvar_t accel_line_window_rgba;
-static vmCvar_t accel_line_window_hl_rgba;
-
-static vmCvar_t accel_vline_rgba;
-static vmCvar_t accel_zero_rgba;
-
-static vmCvar_t accel_predict_strafe_rgba;
-static vmCvar_t accel_predict_sidemove_rgba;
-static vmCvar_t accel_predict_opposite_rgba;
-static vmCvar_t accel_predict_crouchjump_rgba;
-
-static vmCvar_t accel_window_center_rgba;
-static vmCvar_t accel_line_window_center_rgba;
-static vmCvar_t accel_window_center_hl_rgba;
-static vmCvar_t accel_line_window_center_hl_rgba;
-
-static vmCvar_t accel_aim_zone_rgba;
-static vmCvar_t accel_line_aim_zone_rgba;
-static vmCvar_t accel_aim_zone_hl_rgba;
-static vmCvar_t accel_line_aim_zone_hl_rgba;
-
-static vmCvar_t accel_line_size;
-static vmCvar_t accel_vline_size;
-static vmCvar_t accel_condensed_size;
-static vmCvar_t accel_predict_offset;
-static vmCvar_t accel_predict_crouchjump_offset;
+static vmCvar_t accel_p_cj_overdraw;
 
 static vmCvar_t accel_show_move;
 static vmCvar_t accel_show_move_vq3;
 
-static vmCvar_t accel_p_strafe_w_sm;
-static vmCvar_t accel_p_strafe_w_fm;
-static vmCvar_t accel_p_strafe_w_nk;
-static vmCvar_t accel_p_strafe_w_strafe;
-static vmCvar_t accel_p_cj_w_strafe;
+#define PREDICTION_BIN_LIST \
+  X(accel_p_strafe_w_sm) \
+  X(accel_p_strafe_w_fm) \
+  X(accel_p_strafe_w_nk) \
+  X(accel_p_strafe_w_strafe) \
+  X(accel_p_cj_w_strafe) \
+  X(accel_p_strafe_w_sm_vq3) \
+  X(accel_p_strafe_w_fm_vq3) \
+  X(accel_p_strafe_w_nk_vq3) \
+  X(accel_p_strafe_w_strafe_vq3) \
+  X(accel_p_cj_w_strafe_vq3) \
+  X(accel_p_cj_w_sm_vq3) \
+  X(accel_p_sm_w_sm_vq3) \
+  X(accel_p_sm_w_strafe_vq3) \
+  X(accel_p_sm_w_fm_vq3) \
+  X(accel_p_sm_w_nk_vq3)
 
-static vmCvar_t accel_p_strafe_w_sm_vq3;
-static vmCvar_t accel_p_strafe_w_fm_vq3;
-static vmCvar_t accel_p_strafe_w_nk_vq3;
-static vmCvar_t accel_p_strafe_w_strafe_vq3;
-static vmCvar_t accel_p_cj_w_strafe_vq3;
-static vmCvar_t accel_p_cj_w_sm_vq3;
+// prediction cvars
+#define X(n) static vmCvar_t n;
+PREDICTION_BIN_LIST
+#undef X
 
-static vmCvar_t accel_p_sm_w_sm_vq3;
-static vmCvar_t accel_p_sm_w_strafe_vq3;
-static vmCvar_t accel_p_sm_w_fm_vq3;
-static vmCvar_t accel_p_sm_w_nk_vq3;
+// static vmCvar_t accel_threshold; // -0.38 was the biggest seen plasma climb
 
-static vmCvar_t accel_crouchjump_overdraw;
-
-static vmCvar_t accel_mode_neg;
-
-static vmCvar_t accel_vline;
-
-static vmCvar_t version;
-
-static vmCvar_t accel_threshold; // -0.38 was the biggest seen plasma climb
-
-static vmCvar_t accel_window_threshold;
-static vmCvar_t accel_window_grow_limit;
-
-static vmCvar_t accel_point_line_size;
+// hardcode these
+// static vmCvar_t accel_window_threshold;
+// static vmCvar_t accel_window_grow_limit;
 
 static vmCvar_t accel_merge_threshold; // width threshold not delta !
 
@@ -127,252 +87,446 @@ static vmCvar_t accel_edge_height;
 static vmCvar_t accel_edge_min_height;
 static vmCvar_t accel_edge_voffset;
 
-static vmCvar_t accel_window_center;
-static vmCvar_t accel_window_center_size;
-static vmCvar_t accel_window_center_min_size;
-static vmCvar_t accel_window_center_height;
-static vmCvar_t accel_window_center_min_height;
-static vmCvar_t accel_window_center_voffset;
-
-static vmCvar_t accel_aim_zone;
-static vmCvar_t accel_aim_zone_size;
-static vmCvar_t accel_aim_zone_min_size;
-static vmCvar_t accel_aim_zone_height;
-static vmCvar_t accel_aim_zone_min_height;
-static vmCvar_t accel_aim_zone_voffset;
-
+static vmCvar_t accel_window_end;
+static vmCvar_t accel_window_end_size;
+static vmCvar_t accel_window_end_min_size;
+static vmCvar_t accel_window_end_height;
+static vmCvar_t accel_window_end_min_height;
+static vmCvar_t accel_window_end_voffset;
 
 #if ACCEL_DEBUG
   static vmCvar_t accel_verbose;
 #endif // ACCEL_DEBUG
 
 
-static cvarTable_t accel_cvars[] = {
-  { &accel, "p_accel", "0b000000000000000", CVAR_ARCHIVE_ND },
+// **** colors ****
 
-//#define ACCEL_DISABLED            0
-#define ACCEL_ENABLE              1 // the basic view
-#define ACCEL_HL_ACTIVE           2 // highlight active
-#define ACCEL_LINE_ACTIVE         4 // border line active
-#define ACCEL_DISABLE_BAR_AREA    8 // highlight active
-#define ACCEL_VL_ACTIVE           16 // vertical line active
-#define ACCEL_PL_ACTIVE           32 // point line active
-#define ACCEL_CB_ACTIVE           64 // condensed bar active
-#define ACCEL_UNIFORM_VALUE       128 // uniform values
-#define ACCEL_HL_G_ADJ            256 // highlight greater adjecent
-#define ACCEL_WINDOW              512 // draw only window bar
-#define ACCEL_CUSTOM_WINDOW_COL   1024 // draw window with custom color
-#define ACCEL_HL_WINDOW           2048 // when at window highlight it
-#define ACCEL_NEG_UP              4096 // negatives grow up (not down as default)
-#define ACCEL_COLOR_ALTERNATE     8192 // alternating positive colors
-#define ACCEL_VCENTER             16384 // apply vertical bar centering
-
-
-  { &accel_trueness, "p_accel_trueness", "0b0000", CVAR_ARCHIVE_ND },
-
-#define ACCEL_TN_JUMPCROUCH      1
-#define ACCEL_TN_CPM             2
-#define ACCEL_TN_GROUND          4
-#define ACCEL_TN_STATIC_BOOST    8 
-// 1000 ups -> delta ~1.5f, 3000 ups -> delta ~ 1.0f, 5000 ups -> delta ~ 0.5f
-
-  { &accel_min_speed, "p_accel_min_speed", "0", CVAR_ARCHIVE_ND },
-  { &accel_base_height, "p_accel_base_height", "0", CVAR_ARCHIVE_ND },
-  { &accel_max_height, "p_accel_max_height", "50", CVAR_ARCHIVE_ND },
-  { &accel_vcenter_offset, "p_accel_vcenter_offset", "15", CVAR_ARCHIVE_ND },
-  { &accel_yh, "p_accel_yh", "180 30", CVAR_ARCHIVE_ND },
-
-  { &accel_rgba, "p_accel_rgba", ".2 .9 .2 .5", CVAR_ARCHIVE_ND },
-  { &accel_window_rgba, "p_accel_window_rgba", ".5 1 .6 .6", CVAR_ARCHIVE_ND },
-  { &accel_window_hl_rgba, "p_accel_window_hl_rgba", ".6 1 .7 .8", CVAR_ARCHIVE_ND },
-  { &accel_alt_rgba, "p_accel_alt_rgba", ".4 .1 .7 .5", CVAR_ARCHIVE_ND },
-  { &accel_neg_rgba, "p_accel_neg_rgba", ".9 .2 .2 .5", CVAR_ARCHIVE_ND },
-  { &accel_near_edge_rgba, "p_accel_near_edge_rgba", ".7 .1 .1 .5", CVAR_ARCHIVE_ND },
-  { &accel_far_edge_rgba, "p_accel_far_edge_rgba", ".1 .1 .7 .5", CVAR_ARCHIVE_ND },
-  { &accel_hl_rgba, "p_accel_hl_rgba", ".3 1 .3 .75", CVAR_ARCHIVE_ND },
-  { &accel_hl_neg_rgba, "p_accel_hl_neg_rgba", ".9 .3 .3 .75", CVAR_ARCHIVE_ND },
-  { &accel_current_rgba, "p_accel_cur_rgba", ".9 .1 .9 .75", CVAR_ARCHIVE_ND },
-  { &accel_line_rgba, "p_accel_line_rgba", ".4 .9 .4 .6", CVAR_ARCHIVE_ND },
-  { &accel_line_alt_rgba, "p_accel_line_alt_rgba", ".7 .4 .9 .6", CVAR_ARCHIVE_ND },
-  { &accel_line_neg_rgba, "p_accel_line_neg_rgba", ".9 .5 .5 .6", CVAR_ARCHIVE_ND },
-  { &accel_line_hl_rgba, "p_accel_line_hl_rgba", ".6 1 .6 .8", CVAR_ARCHIVE_ND },
-  { &accel_line_hl_neg_rgba, "p_accel_line_hl_neg_rgba", "1 .6 .6 .8", CVAR_ARCHIVE_ND },
-  { &accel_vline_rgba, "p_accel_vline_rgba", ".1 .1 .9 .6", CVAR_ARCHIVE_ND },
-  { &accel_zero_rgba, "p_accel_zero_rgba", ".1 .1 .9 .6", CVAR_ARCHIVE_ND },
-  { &accel_hl_g_adj_rgba, "p_accel_hl_g_adj_rgba", ".9 .55 .0 .8", CVAR_ARCHIVE_ND },
-  { &accel_line_hl_g_adj_rgba, "p_accel_line_hl_g_adj_rgba", "1 .55 .2 .8", CVAR_ARCHIVE_ND },
-  { &accel_line_window_rgba, "p_accel_line_window_rgba", ".6 1 .7 .7", CVAR_ARCHIVE_ND },
-  { &accel_line_window_hl_rgba, "p_accel_line_window_hl_rgba", ".7 1 .8 .9", CVAR_ARCHIVE_ND },
-
-
-  { &accel_predict_strafe_rgba, "p_accel_p_strafe_rgbam", "-.2 -.1 .4 -.4", CVAR_ARCHIVE_ND },
-  { &accel_predict_sidemove_rgba, "p_accel_p_sm_rgbam", ".4 -.1 -.2 -.4", CVAR_ARCHIVE_ND },
-  { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 .-8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
-  { &accel_predict_crouchjump_rgba, "p_accel_p_cj_rgbam", "1 1 1 1", CVAR_ARCHIVE_ND },
-
-  { &accel_window_center_rgba, "p_accel_window_center_rgba", "1 .4 .2 .9", CVAR_ARCHIVE_ND },
-  { &accel_line_window_center_rgba, "p_accel_line_window_center_rgba", ".9 .3 .3 .9", CVAR_ARCHIVE_ND },
-    { &accel_window_center_hl_rgba, "p_accel_window_center_hl_rgba", ".9 .6 .3 .9", CVAR_ARCHIVE_ND },
-  { &accel_line_window_center_hl_rgba, "p_accel_line_window_center_hl_rgba", ".8 .5 .5 .9", CVAR_ARCHIVE_ND },
-
-  { &accel_aim_zone_rgba, "p_accel_aim_zone_rgba", ".2 .4 1 .9", CVAR_ARCHIVE_ND },
-  { &accel_line_aim_zone_rgba, "p_accel_line_aim_zone_rgba", ".3 .3 .9 .9", CVAR_ARCHIVE_ND },
-    { &accel_aim_zone_hl_rgba, "p_accel_aim_zone_hl_rgba", ".3 .6 .9 .9", CVAR_ARCHIVE_ND },
-  { &accel_line_aim_zone_hl_rgba, "p_accel_line_aim_zone_hl_rgba", ".5 .5 .8 .9", CVAR_ARCHIVE_ND },
-
+#define COLOR_LIST \
+  /* (cvar variable name, default) */ \
+  X(accel_rgba, ".2 .9 .2 .5") \
+  X(accel_neg_rgba, ".9 .2 .2 .5") \
+  X(accel_near_edge_rgba, ".7 .1 .1 .5") \
+  X(accel_far_edge_rgba, ".1 .1 .7 .5") \
+  X(accel_hl_rgba, ".3 1 .3 .75") \
+  X(accel_hl_neg_rgba, ".9 .3 .3 .75") \
+  X(accel_p_strafe_rgbam, "-.2 -.1 .4 -.4") \
+  X(accel_p_sidemove_rgbam, ".4 -.1 -.2 -.4") \
+  X(accel_p_opposite_rgbam, ".8 .-8 .8 -.3") \
+  X(accel_p_cj_rgbam, "1 1 1 1") \
+  X(accel_window_end_rgba, ".2 .4 1 .9") \
+  X(accel_window_end_hl_rgba, ".3 .6 .9 .9")
   // add new colors here 
-  
-  { &accel_line_size, "p_accel_line_size", "5", CVAR_ARCHIVE_ND },
-  { &accel_vline_size, "p_accel_vline_size", "1", CVAR_ARCHIVE_ND },
-  { &accel_condensed_size, "p_accel_cond_size", "3", CVAR_ARCHIVE_ND },
-  { &accel_predict_offset, "p_accel_p_offset", "30", CVAR_ARCHIVE_ND },
-  { &accel_predict_crouchjump_offset, "p_accel_p_cj_offset", "0", CVAR_ARCHIVE_ND },
+
+// color id enum
+#define COLOR_ID(n) COLOR_ID_##n
+#define X(n,d) COLOR_ID(n),
+enum {
+  COLOR_LIST
+  COLOR_ID_LENGTH
+};
+#undef X
+
+  // legacy table, TODO: remove
+  // RGBA_I_POS,
+  // RGBA_I_NEG,
+  // RGBA_I_EDGE_NEAR,
+  // RGBA_I_EDGE_FAR,
+  // RGBA_I_HL_POS,
+  // RGBA_I_HL_NEG,
+  // RGBA_I_PREDICT_WAD,
+  // RGBA_I_PREDICT_AD,
+  // RGBA_I_PREDICT_OPPOSITE,
+  // RGBA_I_PREDICT_CROUCHJUMP,
+  // RGBA_I_WINDOW_END,
+  // RGBA_I_WINDOW_END_HL,
+
+
+// color cvars
+#define X(n,d) static vmCvar_t n;
+COLOR_LIST
+#undef X
+
+// **** data structs ****
+
+typedef struct
+{
+  pmove_t       pm;
+  playerState_t pm_ps;
+  pml_t         pml;
+
+  int8_t        move_scale; // full cmd walk or run (64/127)
+} game_t;
+
+static game_t game;
+
+typedef struct graph_bar_ {
+  float x; // scaled x 
+  float y; // scaled y
+  float height; // scaled height (real pixels, not absolute -> not always positive)
+  float width; // scaled width (real pixels)
+  float value; // raw delta speed (combined)
+  float value_side; // raw delta speed (side only) // TODO
+  int   polarity; // 1 = positive, 0 = zero, -1 = negative
+  // ^ could be determined by LTZ or GTZ from value but this is tradeoff memory vs ops
+  float angle_start; // yaw relative (left < 0, right > 0)
+  float angle_end; // yaw relative (left < 0, right > 0)
+  struct graph_bar_ *next;
+  struct graph_bar_ *prev;
+  // not the most elegant solution, but we got rid of ordering
+  int next_is_adj;
+  int prev_is_adj;
+} graph_bar;
+
+#define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded \
+// ^ technically there is no real limitation besides memory block allocation
+
+typedef struct {
+  vec2_t    yh; // y pos, height (not scaled)
+  vec4_t    colors[COLOR_ID_LENGTH];
+
+  graph_bar graph[GRAPH_MAX_RESOLUTION]; // only one graph is plotted at a time
+  int       graph_size;           // how much of the ^ array is currently used
+
+  float     velocity;
+  float     vel_angle;            // velocity angle
+  float     yaw_angle;            // current yaw angle
+
+  int       resolution;           // atm this is read from game setting
+  float     resolution_ratio;     // how much real pixels is equal to 1 max pixel
+  float     resolution_ratio_inv; // inverted
+  int       center;               // resolution / 2
+  float     x_angle_ratio;        // used to convert x axis size to angle (from real pixels) \
+  // note: using x_angle_ratio somewhere else then for angle_yaw_relative usually mean misuse, use angles instead
+
+  // scaled means: in real pixels
+  float     hud_ypos_scaled;
+  float     hud_height_scaled;
+  float     base_height_scaled;
+  float     max_height_scaled;
+
+  float     neg_offset_scaled;
+  float     vcenter_offset_scaled;
+
+  float     predict_offset_scaled;
+  float     predict_crouchjump_offset_scaled;
+
+  float     edge_size_scaled;
+  float     edge_min_size_scaled;
+  float     edge_height_scaled;
+  float     edge_min_height_scaled;
+  float     edge_voffset_scaled;
+
+  float     window_end_size_scaled;
+  float     window_end_min_size_scaled;
+  float     window_end_height_scaled;
+  float     window_end_min_height_scaled;
+  float     window_end_voffset_scaled;
+
+  // guards
+  float     last_fov_x;
+  int       last_vid_width;
+  float     last_screen_x_scale;
+
+  // control
+  int       draw_block;
+
+} accel_t;
+
+static accel_t a;
+
+// used for optimization
+typedef struct
+{
+  // static
+  float half_fov_x;
+  float half_fov_x_tan_inv;
+  float quarter_fov_x;
+  float quarter_fov_x_tan_inv;
+  float half_screen_width;
+
+  // dynamic
+  float angle;
+  float proj_x;
+  float proj_w;
+} projection_data_t;
+
+static projection_data_t projection_data;
+
+// call after cvar init (inc. tracking)
+static void a_init(void)
+{
+  // set guard
+  a.last_fov_x = cg.refdef.fov_x;
+
+  // initial
+  projection_data.half_fov_x = cg.refdef.fov_x / 2;
+  projection_data.half_fov_x_tan_inv = 1.f / tanf(projection_data.half_fov_x);
+  projection_data.quarter_fov_x = cg.refdef.fov_x / 4;
+  projection_data.quarter_fov_x_tan_inv = 1.f / tanf(projection_data.quarter_fov_x);
+
+  // set guard
+  a.last_vid_width = cgs.glconfig.vidWidth;
+
+  // initial
+  projection_data.half_screen_width = cgs.glconfig.vidWidth / 2.f;
+
+  a.resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
+  a.center = a.resolution / 2;
+  a.resolution_ratio = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ?
+      cgs.glconfig.vidWidth / (float)GRAPH_MAX_RESOLUTION
+      : 1.f;
+  a.resolution_ratio_inv = 1.f / a.resolution_ratio;
+
+  a.x_angle_ratio = cg.refdef.fov_x / a.resolution;
+
+  // set guard
+  a.last_screen_x_scale = cgs.screenXScale;
+
+  // initial
+  a.hud_ypos_scaled = a.yh[0] * cgs.screenXScale;
+  a.hud_height_scaled = a.yh[1] * cgs.screenXScale;
+
+  a.predict_offset_scaled = accel_p_offset.value * cgs.screenXScale;
+  a.predict_crouchjump_offset_scaled = accel_p_cj_offset.value * cgs.screenXScale;
+
+  a.edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
+  a.edge_min_size_scaled = accel_edge_min_size.value * cgs.screenXScale;
+  a.edge_height_scaled = accel_edge_height.value * cgs.screenXScale;
+  a.edge_min_height_scaled = accel_edge_min_height.value * cgs.screenXScale;
+  a.edge_voffset_scaled = accel_edge_voffset.value * cgs.screenXScale;
+
+  a.window_end_size_scaled = accel_window_end_size.value * cgs.screenXScale;
+  a.window_end_min_size_scaled = accel_window_end_min_size.value * cgs.screenXScale;
+  a.window_end_height_scaled = accel_window_end_height.value * cgs.screenXScale;
+  a.window_end_min_height_scaled = accel_window_end_min_height.value * cgs.screenXScale;
+  a.window_end_voffset_scaled = accel_window_end_voffset.value * cgs.screenXScale;
+  a.base_height_scaled = accel_base_height.value * cgs.screenXScale;
+  a.max_height_scaled = accel_max_height.value * cgs.screenXScale;
+  a.neg_offset_scaled = accel_neg_offset.value * cgs.screenXScale;
+  a.vcenter_offset_scaled = accel_vcenter_offset.value * cgs.screenXScale;
+}
+
+static void update_static(void)
+{
+  int x_angle_ratio_recalc = 0;
+  // precheck
+  if(a.last_fov_x != cg.refdef.fov_x || a.last_vid_width != cgs.glconfig.vidWidth){
+    x_angle_ratio_recalc = 1;
+  }
+
+  // fox_x guard
+  if(a.last_fov_x != cg.refdef.fov_x)
+  {
+    a.last_fov_x = cg.refdef.fov_x;
+    projection_data.half_fov_x = cg.refdef.fov_x / 2;
+    projection_data.half_fov_x_tan_inv = 1.f / tanf(projection_data.half_fov_x);
+    projection_data.quarter_fov_x = cg.refdef.fov_x / 4;
+    projection_data.quarter_fov_x_tan_inv = 1.f / tanf(projection_data.quarter_fov_x);
+  }
+
+  // vid_width guard
+  if(a.last_vid_width != cgs.glconfig.vidWidth)
+  {
+    a.last_vid_width = cgs.glconfig.vidWidth;
+    projection_data.half_screen_width = cgs.glconfig.vidWidth / 2.f;
+
+    a.resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
+    a.center = a.resolution / 2;
+    a.resolution_ratio = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ?
+        cgs.glconfig.vidWidth / (float)GRAPH_MAX_RESOLUTION
+        : 1.f;
+    a.resolution_ratio_inv = 1.f / a.resolution_ratio;
+  }
+
+  if(x_angle_ratio_recalc){
+    a.x_angle_ratio = cg.refdef.fov_x / a.resolution;
+  }
+
+  // x_scale guard
+  if(a.last_screen_x_scale != cgs.screenXScale){
+    a.last_screen_x_scale = cgs.screenXScale;
+
+    a.hud_ypos_scaled = a.yh[0] * cgs.screenXScale;
+    a.hud_height_scaled = a.yh[1] * cgs.screenXScale;
+
+    a.predict_offset_scaled = accel_p_offset.value * cgs.screenXScale;
+    a.predict_crouchjump_offset_scaled = accel_p_cj_offset.value * cgs.screenXScale;
+
+    a.edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
+    a.edge_min_size_scaled = accel_edge_min_size.value * cgs.screenXScale;
+    a.edge_height_scaled = accel_edge_height.value * cgs.screenXScale;
+    a.edge_min_height_scaled = accel_edge_min_height.value * cgs.screenXScale;
+    a.edge_voffset_scaled = accel_edge_voffset.value * cgs.screenXScale;
+
+    a.window_end_size_scaled = accel_window_end_size.value * cgs.screenXScale;
+    a.window_end_min_size_scaled = accel_window_end_min_size.value * cgs.screenXScale;
+    a.window_end_height_scaled = accel_window_end_height.value * cgs.screenXScale;
+    a.window_end_min_height_scaled = accel_window_end_min_height.value * cgs.screenXScale;
+    a.window_end_voffset_scaled = accel_window_end_voffset.value * cgs.screenXScale;
+    a.base_height_scaled = accel_base_height.value * cgs.screenXScale;
+    a.max_height_scaled = accel_max_height.value * cgs.screenXScale;
+    a.neg_offset_scaled = accel_neg_offset.value * cgs.screenXScale;
+    a.vcenter_offset_scaled = accel_vcenter_offset.value * cgs.screenXScale;
+  }
+}
+
+
+// **** cvar tables ****
+
+// helper to keep cvar names based on the variable name
+#define CVAR_EXPAND_NAME(n) n, "p_" #n
+
+static cvarTable_t accel_cvars[] = {
+  { &CVAR_EXPAND_NAME(accel), "0b000000", CVAR_ARCHIVE_ND },
+  // #define ACCEL_DISABLED            0
+  #define ACCEL_ENABLE              1 // the basic view
+  #define ACCEL_HL_ACTIVE           (1 << 1) // highlight active
+  #define ACCEL_UNIFORM_VALUE       (1 << 2) // uniform values
+  #define ACCEL_WINDOW              (1 << 3) // draw only window bar
+  #define ACCEL_NEG_UP              (1 << 4) // negatives grow up (not down as default)
+  #define ACCEL_VCENTER             (1 << 5) // apply vertical bar centering
+
+  // ^ old features were completely removed
+  // can be found at github tag v0.3.1
+
+  { &CVAR_EXPAND_NAME(version), ACCEL_VERSION, CVAR_USERINFO | CVAR_INIT },
+  { &CVAR_EXPAND_NAME(accel_trueness), "0b0000", CVAR_ARCHIVE_ND },
+  #define ACCEL_TN_JUMPCROUCH      1
+  #define ACCEL_TN_CPM             (1 << 1)
+  #define ACCEL_TN_GROUND          (1 << 2)
+  #define ACCEL_TN_STATIC_BOOST    (1 << 3)
+  // 1000 ups -> delta ~1.5f, 3000 ups -> delta ~ 1.0f, 5000 ups -> delta ~ 0.5f
+
+  { &CVAR_EXPAND_NAME(accel_min_speed), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_base_height), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_max_height), "50", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_yh), "180 30", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_neg_mode), "0", CVAR_ARCHIVE_ND },
+  //#define ACCEL_NEG_MODE          0 // negative disabled
+  #define ACCEL_NEG_MODE_ENABLED    1 // negative enabled
+  #define ACCEL_NEG_MODE_ADJECENT   (1 << 1) // only adjecent negative are shown
+
+  { &CVAR_EXPAND_NAME(accel_neg_offset), "15", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_vcenter_offset), "15", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_offset), "30", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_cj_offset), "0", CVAR_ARCHIVE_ND },
+
+  { &CVAR_EXPAND_NAME(accel_p_cj_overdraw), "0", CVAR_ARCHIVE_ND },
+
+  #define X(n,d) { &CVAR_EXPAND_NAME(n), d, CVAR_ARCHIVE_ND },
+  COLOR_LIST
+  #undef X
 
   // enable regular accel graph while holding specific keys
-  { &accel_show_move, "p_accel_show_move", "0b1101", CVAR_ARCHIVE_ND },
-  { &accel_show_move_vq3, "p_accel_show_move_vq3", "0b1111", CVAR_ARCHIVE_ND },
-
+  { &CVAR_EXPAND_NAME(accel_show_move), "0b1101", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_show_move_vq3), "0b1111", CVAR_ARCHIVE_ND },
   #define ACCEL_MOVE_STRAFE         1
-  #define ACCEL_MOVE_SIDE           2
-  #define ACCEL_MOVE_FORWARD        4
-  #define ACCEL_MOVE_SIDE_GROUNDED  8
+  #define ACCEL_MOVE_SIDE           (1 << 1)
+  #define ACCEL_MOVE_FORWARD        (1 << 2)
+  #define ACCEL_MOVE_SIDE_GROUNDED  (1 << 3)
 
-  { &accel_p_strafe_w_sm,     "p_accel_p_strafe_w_sm", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_strafe_w_fm,     "p_accel_p_strafe_w_fm", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_strafe_w_nk,     "p_accel_p_strafe_w_nk", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_strafe_w_strafe, "p_accel_p_strafe_w_strafe", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_cj_w_strafe,     "p_accel_p_cj_w_strafe", "0b00", CVAR_ARCHIVE_ND },
+  #define X(n) { &CVAR_EXPAND_NAME(n), "0b00", CVAR_ARCHIVE_ND },
+  PREDICTION_BIN_LIST
+  #undef X
+  #define ACCEL_PREDICT_MOVE          1
+  #define ACCEL_PREDICT_MOVE_WINDOW   (1 << 1)
 
-  { &accel_p_strafe_w_sm_vq3,     "p_accel_p_strafe_w_sm_vq3", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_strafe_w_fm_vq3,     "p_accel_p_strafe_w_fm_vq3", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_strafe_w_nk_vq3,     "p_accel_p_strafe_w_nk_vq3", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_strafe_w_strafe_vq3, "p_accel_p_strafe_w_strafe_vq3", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_cj_w_strafe_vq3,     "p_accel_p_cj_w_strafe_vq3", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_cj_w_sm_vq3,         "p_accel_p_cj_w_sm_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_merge_threshold), "2", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_edge), "0b000000", CVAR_ARCHIVE_ND },
+  //#define ACCEL_EDGE_ENABLE 1
+  #define ACCEL_EDGE_FULL_SIZE        (1 << 1) // extend to negative (double size + gap)
+  #define ACCEL_EDGE_RELATIVE_SIZE    (1 << 2) // making p_accel_edge_size percentage of bar width
+  #define ACCEL_EDGE_RELATIVE_HEIGHT  (1 << 3) // making p_accel_edge_height percentage of bar height
+  #define ACCEL_EDGE_VCENTER_FORCE    (1 << 4) // forced vcentering
+  #define ACCEL_EDGE_VCENTER          (1 << 5) // override regular accel graph vcentering
 
-  { &accel_p_sm_w_sm_vq3, "p_accel_p_sm_w_sm_vq3", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_sm_w_strafe_vq3, "p_accel_p_sm_w_strafe_vq3", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_sm_w_fm_vq3, "p_accel_p_sm_w_fm_vq3", "0b00", CVAR_ARCHIVE_ND },
-  { &accel_p_sm_w_nk_vq3, "p_accel_p_sm_w_nk_vq3", "0b00", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_edge_size), "1", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_edge_min_size), "2", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_edge_height), "-1", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_edge_min_height), "-1", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_edge_voffset), "0", CVAR_ARCHIVE_ND },
 
+  { &CVAR_EXPAND_NAME(accel_window_end), "0b0000000", CVAR_ARCHIVE_ND },
+  #define ACCEL_WINDOW_END_HL              (1 << 1)   // highlight
+  #define ACCEL_WINDOW_END_RELATIVE_SIZE   (1 << 2)   // making p_accel_aim_zone_size percentage of bar width
+  #define ACCEL_WINDOW_END_RELATIVE_HEIGHT (1 << 3)   // making p_accel_aim_zone_height percentage of bar height
+  #define ACCEL_WINDOW_END_SUBTRACT        (1 << 4)  // cutoff the "covered" area of window zone
+  #define ACCEL_WINDOW_END_VCENTER_FORCE   (1 << 5)  // forced vcentering
+  #define ACCEL_WINDOW_END_VCENTER         (1 << 6)  // override regular accel graph vcentering
 
-#define ACCEL_MOVE_PREDICT          1
-#define ACCEL_MOVE_PREDICT_WINDOW   2
-
-
-  { &accel_crouchjump_overdraw, "p_accel_p_cj_overdraw", "0", CVAR_ARCHIVE_ND },
-
-
-  { &accel_mode_neg, "p_accel_neg_mode", "0", CVAR_ARCHIVE_ND },
-
-//#define ACCEL_NEG_MODE          0 // negative disabled
-#define ACCEL_NEG_MODE_ENABLED    1 // negative enabled
-#define ACCEL_NEG_MODE_ADJECENT   2 // only adjecent negative are shown
-//#define ACCEL_NEG_MODE_ZERO_ONLY  3 // calculated but only at zero bar shown
-
-  { &accel_vline, "p_accel_vline", "0b00", CVAR_ARCHIVE_ND },
-
-#define ACCEL_VL_USER_COLOR   1 // line have user defined color, if this is not set the colors are pos/neg
-#define ACCEL_VL_LINE_H       2 // include bar height
-
-  { &version, "p_accel_version", ACCEL_VERSION, CVAR_USERINFO | CVAR_INIT },
-
-  { &accel_threshold, "p_accel_threshold", "0", CVAR_ARCHIVE_ND },
-
-  { &accel_window_threshold, "p_accel_window_threshold", "10", CVAR_ARCHIVE_ND },
-  { &accel_window_grow_limit, "p_accel_window_grow_limit", "5", CVAR_ARCHIVE_ND },
-
-  { &accel_point_line_size, "p_accel_point_line_size", "1", CVAR_ARCHIVE_ND },
-
-{ &accel_merge_threshold, "p_accel_merge_threshold", "2", CVAR_ARCHIVE_ND },
-
-{ &accel_edge, "p_accel_edge", "0b000000", CVAR_ARCHIVE_ND },
-
-//#define ACCEL_EDGE_ENABLE 1
-#define ACCEL_EDGE_FULL_SIZE        2 // extend to negative (double size + gap)
-#define ACCEL_EDGE_RELATIVE_SIZE    4 // making p_accel_edge_size percentage of bar width
-#define ACCEL_EDGE_RELATIVE_HEIGHT  8 // making p_accel_edge_height percentage of bar height
-#define ACCEL_EDGE_VCENTER_FORCE    16 // override regular accel graph vcentering
-#define ACCEL_EDGE_VCENTER          32 // forced vcentering
-
-{ &accel_edge_size, "p_accel_edge_size", "1", CVAR_ARCHIVE_ND },
-{ &accel_edge_min_size, "p_accel_edge_min_size", "2", CVAR_ARCHIVE_ND },
-{ &accel_edge_height, "p_accel_edge_height", "-1", CVAR_ARCHIVE_ND },
-{ &accel_edge_min_height, "p_accel_edge_min_height", "-1", CVAR_ARCHIVE_ND },
-{ &accel_edge_voffset, "p_accel_edge_voffset", "0", CVAR_ARCHIVE_ND },
-
-{ &accel_window_center, "p_accel_window_center", "0b000000", CVAR_ARCHIVE_ND },
-
-#define ACCEL_WINDOW_CENTER_HL              2  // highlight 
-#define ACCEL_WINDOW_CENTER_RELATIVE_SIZE   4  // making p_accel_window_center_size percentage of bar width
-#define ACCEL_WINDOW_CENTER_RELATIVE_HEIGHT 8  // making p_accel_window_center_height percentage of bar height
-#define ACCEL_WINDOW_CENTER_VCENTER_FORCE   16 // override regular accel graph vcentering
-#define ACCEL_WINDOW_CENTER_VCENTER         32 // forced vcentering
-
-{ &accel_window_center_size, "p_accel_window_center_size", "10", CVAR_ARCHIVE_ND },
-{ &accel_window_center_min_size, "p_accel_window_center_min_size", "5", CVAR_ARCHIVE_ND },
-{ &accel_window_center_height, "p_accel_window_center_height", "-1", CVAR_ARCHIVE_ND },
-{ &accel_window_center_min_height, "p_accel_window_center_min_height", "0", CVAR_ARCHIVE_ND },
-{ &accel_window_center_voffset, "p_accel_window_center_voffset", "0", CVAR_ARCHIVE_ND },
-
-{ &accel_aim_zone, "p_accel_aim_zone", "0b0000000", CVAR_ARCHIVE_ND },
-
-#define ACCEL_AIM_HL              2   // highlight
-#define ACCEL_AIM_RELATIVE_SIZE   4   // making p_accel_aim_zone_size percentage of bar width
-#define ACCEL_AIM_RELATIVE_HEIGHT 8   // making p_accel_aim_zone_height percentage of bar height
-#define ACCEL_AIM_SUBTRACT        16  // cutoff the "covered" area of window zone
-#define ACCEL_AIM_VCENTER_FORCE   32  // override regular accel graph vcentering
-#define ACCEL_AIM_VCENTER         64  // forced vcentering
-
-{ &accel_aim_zone_size, "p_accel_aim_zone_size", "10", CVAR_ARCHIVE_ND },
-{ &accel_aim_zone_min_size, "p_accel_aim_zone_min_size", "10", CVAR_ARCHIVE_ND },
-{ &accel_aim_zone_height, "p_accel_aim_zone_height", "-1", CVAR_ARCHIVE_ND },
-{ &accel_aim_zone_min_height, "p_accel_aim_zone_min_height", "-1", CVAR_ARCHIVE_ND },
-{ &accel_aim_zone_voffset, "p_accel_aim_zone_voffset", "0", CVAR_ARCHIVE_ND },
-
-
+  { &CVAR_EXPAND_NAME(accel_window_end_size), "10", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_window_end_min_size), "10", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_window_end_height), "-1", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_window_end_min_height), "-1", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_window_end_voffset), "0", CVAR_ARCHIVE_ND },
 
   #if ACCEL_DEBUG
-    { &accel_verbose, "p_accel_verbose", "0", CVAR_ARCHIVE_ND },
+    { &CVAR_EXPAND_NAME(accel_verbose), "0", CVAR_ARCHIVE_ND },
   #endif // ACCEL_DEBUG
 };
 
-enum {
-  RGBA_I_POS,
-  RGBA_I_WINDOW,
-  RGBA_I_WINDOW_HL,
-  RGBA_I_ALT,
-  RGBA_I_NEG,
-  RGBA_I_EDGE_NEAR,
-  RGBA_I_EDGE_FAR,
-  RGBA_I_HL_POS,
-  RGBA_I_HL_NEG,
-  RGBA_I_POINT,
-  RGBA_I_BORDER,
-  RGBA_I_BORDER_ALT,
-  RGBA_I_BORDER_NEG,
-  RGBA_I_BORDER_HL_POS,
-  RGBA_I_BORDER_HL_NEG,
-  RGBA_I_VLINE,
-  RGBA_I_ZERO,
-  RGBA_I_HL_G_ADJ,
-  RGBA_I_BORDER_HL_G_ADJ,
-  RGBA_I_BORDER_WIDNOW,
-  RGBA_I_BORDER_WIDNOW_HL,
-  RGBA_I_PREDICT_WAD,
-  RGBA_I_PREDICT_AD,
-  RGBA_I_PREDICT_OPPOSITE,
-  RGBA_I_PREDICT_CROUCHJUMP,
-  RGBA_I_WINDOW_CENTER,
-  RGBA_I_BORDER_WINDOW_CENTER,
-  RGBA_I_WINDOW_CENTER_HL,
-  RGBA_I_BORDER_WINDOW_CENTER_HL,
-  RGBA_I_AIM_ZONE,
-  RGBA_I_BORDER_AIM_ZONE,
-  RGBA_I_AIM_ZONE_HL,
-  RGBA_I_BORDER_AIM_ZONE_HL,
-  RGBA_I_LENGTH
+
+// **** cvars tracking **** (noticing changes)
+
+// general callbacks
+static void _tcb_binary(trackTableItem const *item, void *_){
+  item->vmCvar->integer  = cvar_getInteger(item->name);
+}
+
+static void _tcb_vec2(trackTableItem const *item, void *data){
+  ParseVec(item->vmCvar->string, (vec_t *)data, 2);
+}
+
+static void _tcb_vec4(trackTableItem const *item, void *data){
+  ParseVec(item->vmCvar->string, (vec_t *)data, 4);
+}
+
+// each of these has to have callback defined
+#define TRACK_LIST_SPECIAL \
+  X(accel) \
+  X(mdd_projection) \
+  X(accel_edge) \
+  X(accel_window_end)
+
+// binary parsing or vector parsing is good enough reason to track
+#define TRACK_LIST_BINARY \
+  X(accel_trueness) \
+  \
+  X(accel_show_move) \
+  X(accel_show_move_vq3) \
+  \
+  PREDICTION_BIN_LIST
+
+#define TRACK_LIST_VEC2 \
+  X(accel_yh, &a.yh)
+
+#define X(n,d) X(n, &a.colors[COLOR_ID(n)])
+#define TRACK_LIST_VEC4 \
+  COLOR_LIST
+#undef X
+
+// declaration of special tracking callbacks
+#define X(n) static TRACK_CALLBACK(n);
+TRACK_LIST_SPECIAL
+#undef X
+
+
+static trackTableItem accel_track_cvars[] = {
+  #define X(n) { &CVAR_EXPAND_NAME(n), 0, TRACK_CALLBACK_NAME(n), 0 },
+  TRACK_LIST_SPECIAL
+  #undef X
+  #define X(n) { &CVAR_EXPAND_NAME(n), 0, _tcb_binary, 0 },
+  TRACK_LIST_BINARY
+  #undef X
+  #define X(n,t) { &CVAR_EXPAND_NAME(n), 0, _tcb_vec2, t },
+  TRACK_LIST_VEC2
+  #undef X
+  #define X(n,t) { &CVAR_EXPAND_NAME(n), 0, _tcb_vec4, t },
+  TRACK_LIST_VEC4
+  #undef X
 };
+
+// **** control enums ****
 
 enum {
   PREDICT_NONE,
@@ -392,152 +546,182 @@ enum {
   MOVE_WALK_SLICK,
 };
 
-static int move_type;
-
 // no help here, just because there is no space in the proxymod help table and i don't want to modify it (for now)
 
-typedef struct graph_bar_ {
-  int   order; // control variable for adjecent checking
-  float x; // scaled x 
-  float y; // scaled y
-  float height; // scaled height (not absolute -> not always positive)
-  float width; // scaled width
-  float value; // raw delta speed (combined)
-  int   polarity; // 1 = positive, 0 = zero, -1 = negative
-  float angle; // yaw relative
-  struct graph_bar_ *next;
-  struct graph_bar_ *prev;
-} graph_bar;
 
-#define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded
-
-static graph_bar accel_graph[GRAPH_MAX_RESOLUTION]; // only one graph is plotted at a time
-static int accel_graph_size;
-
-static int resolution;
-static float resolution_ratio;
-static int center;
-static float x_angle_ratio;
-static float ypos_scaled;
-static float hud_height_scaled;
-static float zero_gap_scaled;
-static float line_size_scaled;
-static float vline_size_scaled;
-static float predict_offset_scaled;
-static float predict_crouchjump_offset_scaled;
-static float vel_angle;
-static float yaw;
-static float edge_size_scaled;
-static float edge_min_size_scaled;
-static float edge_height_scaled;
-static float edge_min_height_scaled;
-static float edge_voffset_scaled;
-static float window_center_size_scaled;
-static float window_center_min_size_scaled;
-static float window_center_height_scaled;
-static float window_center_min_height_scaled;
-static float window_center_voffset_scaled;
-static float aim_zone_size_scaled;
-static float aim_zone_min_size_scaled;
-static float aim_zone_height_scaled;
-static float aim_zone_min_height_scaled;
-static float aim_zone_voffset_scaled;
-static float base_height_scaled;
-static float max_height_scaled;
-static float vcenter_offset_scaled;
+inline static float angle_short_radial_distance(float a_, float b_);
+inline static void draw_positive(float x, float y, float w, float h);
+inline static void _draw_positive_nvc(float x, float y, float w, float h);
 
 
-static vec4_t color_tmp;
+// **** functions with switching mechanic ****
+// usually enable/disable
 
-static int predict;
-static int predict_window;
-static int order;
+static void _vertical_center_noop(float *y, float h){
+  (void) y, (void) h;
+  // intentionally empty
+}
 
-static int color_alternate;
+static void _vertical_center(float *y, float h){
+  *y -= a.vcenter_offset_scaled - h / 2; // assume h is always positive (might need abs here)
+}
 
-typedef struct
+static void (*vertical_center)(float*, float) = _vertical_center_noop;
+
+
+// this is expensive, isn't there any better way ? like alternative to trap_R_DrawStretchPic which handle that ?
+static void _add_projection_x_0(float *x, float *w)
 {
-  vec2_t        graph_yh;
+  projection_data.angle = (*x / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
+  projection_data.proj_x = projection_data.half_screen_width * (1 + tanf(projection_data.angle) * projection_data.half_fov_x_tan_inv);
+  projection_data.angle = ((*x + *w) / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
+  projection_data.proj_w = (projection_data.half_screen_width * (1 + tanf(projection_data.angle) * projection_data.half_fov_x_tan_inv)) - projection_data.proj_x;
+   
+  *x = projection_data.proj_x;
+  *w = projection_data.proj_w;
+}
 
-  vec4_t        graph_rgba[RGBA_I_LENGTH]; 
+static void _add_projection_x_1(float *x, float *w)
+{
+  (void) x, (void) w;
+  // intentionally empty
+}
 
-  pmove_t       pm;
-  playerState_t pm_ps;
-  pml_t         pml;
-} accel_t;
+// this is expensive, isn't there any better way ? like alternative to trap_R_DrawStretchPic which handle that ?
+static void _add_projection_x_2(float *x, float *w)
+{
+  projection_data.angle = (*x / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
+  projection_data.proj_x = projection_data.half_screen_width * (1 + tanf(projection_data.angle / 2) * projection_data.quarter_fov_x_tan_inv);
+  projection_data.angle = ((*x + *w) / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
+  projection_data.proj_w = (projection_data.half_screen_width * (1 + tanf(projection_data.angle / 2) * projection_data.quarter_fov_x_tan_inv)) - projection_data.proj_x;
 
-static accel_t a;
+  *x = projection_data.proj_x;
+  *w = projection_data.proj_w;
+}
 
+static void (*add_projection_x)(float*, float*) = _add_projection_x_1;
+
+void (*draw_positive_edge)(float x, float y, float w, float h) = draw_positive;
+void (*draw_positive_window_end)(float x, float y, float w, float h) = draw_positive;
+
+
+// **** special tracking cvars callbacks ****
+
+static TRACK_CALLBACK(accel){
+  // parse binary format
+  // vmCvar.integer is actually only atoi, so in order to support format like 0b01 we need to call parser
+  item->vmCvar->integer = cvar_getInteger(item->name);
+
+  // update all related function pointers
+  if(item->vmCvar->integer & ACCEL_VCENTER){
+    // enable vertical centering
+    vertical_center = _vertical_center;
+  } else {
+    // disable vertical centering
+    vertical_center = _vertical_center_noop;
+  }
+}
+
+static TRACK_CALLBACK(mdd_projection)
+{
+  switch(item->vmCvar->integer){
+    case 0:
+      add_projection_x = _add_projection_x_0;
+      break;
+    case 1:
+      add_projection_x = _add_projection_x_1;
+      break;
+    case 2:
+      add_projection_x = _add_projection_x_2;
+      break;
+  }
+}
+
+static TRACK_CALLBACK(accel_edge){
+  // parse binary format
+  // vmCvar.integer is actually only atoi, so in order to support format like 0b01 we need to call parser
+  item->vmCvar->integer = cvar_getInteger(item->name);
+
+  // update all related function pointers
+  if(item->vmCvar->integer & ACCEL_VCENTER){
+    // enable vertical centering
+    draw_positive_edge = draw_positive;
+  } else {
+    // disable vertical centering
+    draw_positive_edge = _draw_positive_nvc;
+  }
+}
+
+static TRACK_CALLBACK(accel_window_end){
+  // parse binary format
+  // vmCvar.integer is actually only atoi, so in order to support format like 0b01 we need to call parser
+  item->vmCvar->integer = cvar_getInteger(item->name);
+
+  // update all related function pointers
+  if(item->vmCvar->integer & ACCEL_VCENTER){
+    // enable vertical centering
+    draw_positive_window_end = draw_positive;
+  } else {
+    // disable vertical centering
+    draw_positive_window_end = _draw_positive_nvc;
+  }
+}
+
+static void PmoveSingle(void);
+static void PmoveSingle_update(void);
+static void PM_AirMove(void);
+static void PM_WalkMove(void);
+static void PM_WalkMove_predict(int predict, int window);
+static void PM_AirMove_predict(int predict, int window);
+
+
+// **** primary hud functions ****
+// following three functions (init_accel, update_accel, draw_accel)
+// hud entry points, from these everything else is called
 
 void init_accel(void)
 {
   init_cvars(accel_cvars, ARRAY_LEN(accel_cvars));
-}
+  init_tcvars(accel_track_cvars, ARRAY_LEN(accel_track_cvars));
 
+  // a struct initialization
+  a_init();
+}
 
 void update_accel(void)
 {
-  update_cvars(accel_cvars, ARRAY_LEN(accel_cvars));
-  accel.integer           = cvar_getInteger("p_accel"); // this is only relevant to be updated before draw
-}
+  // handle main cvar separately to prevent unnecessary overheat in case accel is disabled
+  trap_Cvar_Update(accel_cvars[0].vmCvar);
+  accel_cvars[0].vmCvar->integer = cvar_getInteger(accel_cvars[0].cvarName);
 
-static void PmoveSingle(void);
-static void PM_AirMove(void);
-static void PM_WalkMove(void);
-inline static float angle_short_radial_distance(float a_, float b_);
+  if (!accel.integer) return;
+
+  update_cvars(accel_cvars + 1, ARRAY_LEN(accel_cvars) - 1); // skip the first item which is "p_accel"
+  update_tcvars(accel_track_cvars, ARRAY_LEN(accel_track_cvars));
+
+  game.pm_ps = *getPs();
+
+  a.velocity = VectorLength2(game.pm_ps.velocity);
+
+  if (a.velocity >= accel_min_speed.value) {
+    PmoveSingle_update();
+  }
+}
 
 void draw_accel(void)
 {
   if (!accel.integer) return;
 
-  // update cvars
-  accel_trueness.integer  = cvar_getInteger("p_accel_trueness");
-  accel_vline.integer     = cvar_getInteger("p_accel_vline");
-
-  accel_show_move.integer = cvar_getInteger("p_accel_show_move");
-  accel_show_move_vq3.integer = cvar_getInteger("p_accel_show_move_vq3");
-
-  accel_p_strafe_w_sm.integer = cvar_getInteger("p_accel_p_strafe_w_sm");
-  accel_p_strafe_w_fm.integer = cvar_getInteger("p_accel_p_strafe_w_fm");
-  accel_p_strafe_w_nk.integer = cvar_getInteger("p_accel_p_strafe_w_nk");
-  accel_p_strafe_w_strafe.integer = cvar_getInteger("p_accel_p_strafe_w_strafe");
-  accel_p_cj_w_strafe.integer = cvar_getInteger("p_accel_p_cj_w_strafe");
-
-  accel_p_strafe_w_sm_vq3.integer = cvar_getInteger("p_accel_p_strafe_w_sm_vq3");
-  accel_p_strafe_w_fm_vq3.integer = cvar_getInteger("p_accel_p_strafe_w_fm_vq3");
-  accel_p_strafe_w_nk_vq3.integer = cvar_getInteger("p_accel_p_strafe_w_nk_vq3");
-  accel_p_strafe_w_strafe_vq3.integer = cvar_getInteger("p_accel_p_strafe_w_strafe_vq3");
-  accel_p_cj_w_strafe_vq3.integer = cvar_getInteger("p_accel_p_cj_w_strafe_vq3");
-  accel_p_cj_w_sm_vq3.integer = cvar_getInteger("p_accel_p_cj_w_sm_vq3");
-
-  accel_p_sm_w_sm_vq3.integer = cvar_getInteger("p_accel_p_sm_w_sm_vq3");
-  accel_p_sm_w_strafe_vq3.integer = cvar_getInteger("p_accel_p_sm_w_strafe_vq3");
-  accel_p_sm_w_fm_vq3.integer = cvar_getInteger("p_accel_p_sm_w_fm_vq3");
-  accel_p_sm_w_nk_vq3.integer = cvar_getInteger("p_accel_p_sm_w_nk_vq3");
-
-  accel_window_grow_limit.integer = cvar_getInteger("p_accel_window_grow_limit");
-
-  accel_edge.integer  = cvar_getInteger("p_accel_edge");
-
-  accel_window_center.integer = cvar_getInteger("p_accel_window_center");
-
-  accel_aim_zone.integer  = cvar_getInteger("p_accel_aim_zone");
-
-  ParseVec(accel_yh.string, a.graph_yh, 2);
-  for (int i = 0; i < RGBA_I_LENGTH; ++i) ParseVec(accel_cvars[7 + i].vmCvar->string, a.graph_rgba[i], 4);
-
-  a.pm_ps = *getPs();
-
-  if (VectorLength2(a.pm_ps.velocity) >= accel_min_speed.value) {
+  if (a.velocity >= accel_min_speed.value) {
     PmoveSingle();
   }
 
   // TODO: put drawing here
 }
 
-static void move(void)
+inline static void move(void)
 {
-  if (a.pml.walking)
+  if (game.pml.walking)
   {
     // walking on ground
     PM_WalkMove();
@@ -549,243 +733,237 @@ static void move(void)
   }
 }
 
-static void PmoveSingle(void)
+inline static void move_predict(int predict, int window)
 {
-  int8_t const scale = a.pm_ps.stats[13] & PSF_USERINPUT_WALK ? 64 : 127;
-  if (!cg.demoPlayback && !(a.pm_ps.pm_flags & PMF_FOLLOW))
+  if (game.pml.walking)
   {
-    int32_t const cmdNum = trap_GetCurrentCmdNumber();
-    trap_GetUserCmd(cmdNum, &a.pm.cmd);
+    // walking on ground
+    PM_WalkMove_predict(predict, window);
   }
   else
   {
-    a.pm.cmd.forwardmove = scale * ((a.pm_ps.stats[13] & PSF_USERINPUT_FORWARD) / PSF_USERINPUT_FORWARD -
-                                    (a.pm_ps.stats[13] & PSF_USERINPUT_BACKWARD) / PSF_USERINPUT_BACKWARD);
-    a.pm.cmd.rightmove   = scale * ((a.pm_ps.stats[13] & PSF_USERINPUT_RIGHT) / PSF_USERINPUT_RIGHT -
-                                  (a.pm_ps.stats[13] & PSF_USERINPUT_LEFT) / PSF_USERINPUT_LEFT);
-    a.pm.cmd.upmove      = scale * ((a.pm_ps.stats[13] & PSF_USERINPUT_JUMP) / PSF_USERINPUT_JUMP -
-                               (a.pm_ps.stats[13] & PSF_USERINPUT_CROUCH) / PSF_USERINPUT_CROUCH);
+    // airborne
+    PM_AirMove_predict(predict, window);
+  }
+}
+
+static void PmoveSingle_update(void)
+{
+  // scale is full move, the cmd moves could be partials,
+  // particals cause flickering -> p_flickfree force full moves
+  game.move_scale = game.pm_ps.stats[13] & PSF_USERINPUT_WALK ? 64 : 127;
+  if (!cg.demoPlayback && !(game.pm_ps.pm_flags & PMF_FOLLOW))
+  {
+    trap_GetUserCmd(trap_GetCurrentCmdNumber(), &game.pm.cmd);
+  }
+  else
+  {
+    game.pm.cmd.forwardmove = game.move_scale * ((game.pm_ps.stats[13] & PSF_USERINPUT_FORWARD) / PSF_USERINPUT_FORWARD -
+                                    (game.pm_ps.stats[13] & PSF_USERINPUT_BACKWARD) / PSF_USERINPUT_BACKWARD);
+    game.pm.cmd.rightmove   = game.move_scale * ((game.pm_ps.stats[13] & PSF_USERINPUT_RIGHT) / PSF_USERINPUT_RIGHT -
+                                  (game.pm_ps.stats[13] & PSF_USERINPUT_LEFT) / PSF_USERINPUT_LEFT);
+    game.pm.cmd.upmove      = game.move_scale * ((game.pm_ps.stats[13] & PSF_USERINPUT_JUMP) / PSF_USERINPUT_JUMP -
+                               (game.pm_ps.stats[13] & PSF_USERINPUT_CROUCH) / PSF_USERINPUT_CROUCH);
   }
 
   // clear all pmove local vars
-  memset(&a.pml, 0, sizeof(a.pml));
+  memset(&game.pml, 0, sizeof(game.pml));
 
   // save old velocity for crashlanding
-  VectorCopy(a.pm_ps.velocity, a.pml.previous_velocity);
+  VectorCopy(game.pm_ps.velocity, game.pml.previous_velocity);
 
-  AngleVectors(a.pm_ps.viewangles, a.pml.forward, a.pml.right, a.pml.up);
+  AngleVectors(game.pm_ps.viewangles, game.pml.forward, game.pml.right, game.pml.up);
 
-  if (a.pm.cmd.upmove < 10)
+  // TODO: why is this here ? (duck ? water level ? ground trace ?)
+  if (game.pm.cmd.upmove < 10)
   {
     // not holding jump
-    a.pm_ps.pm_flags &= ~PMF_JUMP_HELD;
+    game.pm_ps.pm_flags &= ~PMF_JUMP_HELD;
   }
 
-  if (a.pm_ps.pm_type >= PM_DEAD)
+  if (game.pm_ps.pm_type >= PM_DEAD)
   {
-    a.pm.cmd.forwardmove = 0;
-    a.pm.cmd.rightmove   = 0;
-    a.pm.cmd.upmove      = 0;
+    game.pm.cmd.forwardmove = 0;
+    game.pm.cmd.rightmove   = 0;
+    game.pm.cmd.upmove      = 0;
   }
 
   // set mins, maxs, and viewheight
-  PM_CheckDuck(&a.pm, &a.pm_ps);
+  PM_CheckDuck(&game.pm, &game.pm_ps);
 
   // set watertype, and waterlevel
-  PM_SetWaterLevel(&a.pm, &a.pm_ps);
+  PM_SetWaterLevel(&game.pm, &game.pm_ps);
 
   // needed for PM_GroundTrace
-  a.pm.tracemask = a.pm_ps.pm_type == PM_DEAD ? MASK_PLAYERSOLID & ~CONTENTS_BODY : MASK_PLAYERSOLID;
+  game.pm.tracemask = game.pm_ps.pm_type == PM_DEAD ? MASK_PLAYERSOLID & ~CONTENTS_BODY : MASK_PLAYERSOLID;
 
   // set groundentity
-  PM_GroundTrace(&a.pm, &a.pm_ps, &a.pml);
+  PM_GroundTrace(&game.pm, &game.pm_ps, &game.pml);
 
-  // note: none of the above (PM_CheckDuck, PM_SetWaterLevel, PM_GroundTrace) use a.pm.cmd.forwardmove a.pm.cmd.rightmove)
+  // note: none of the above (PM_CheckDuck, PM_SetWaterLevel, PM_GroundTrace) uses niether a.pm.cmd.forwardmove and a.pm.cmd.rightmove
 
-  if(a.pm_ps.powerups[PW_FLIGHT] || a.pm_ps.pm_flags & PMF_GRAPPLE_PULL
-      || a.pm_ps.pm_flags & PMF_TIME_WATERJUMP || a.pm.waterlevel > 1)
-  {
+  a.draw_block = (game.pm_ps.powerups[PW_FLIGHT] || game.pm_ps.pm_flags & PMF_GRAPPLE_PULL
+      || game.pm_ps.pm_flags & PMF_TIME_WATERJUMP || game.pm.waterlevel > 1);
+
+  if(a.draw_block){
+    return;
+  }
+
+  update_static();
+
+  // these are dynamic, changes every frame
+  a.vel_angle = atan2f(game.pm_ps.velocity[1], game.pm_ps.velocity[0]);
+  a.yaw_angle = DEG2RAD(game.pm_ps.viewangles[YAW]);
+}
+
+static void PmoveSingle(void)
+{
+  if(a.draw_block){
     return;
   }
 
   // drawing gonna happend
 
-  // update static variables
-  ParseVec(accel_yh.string, a.graph_yh, 2);
+  int predict = 0;
+  int predict_window = 0;
 
-  resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
-  center = resolution / 2;
-  resolution_ratio = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ?
-      cgs.glconfig.vidWidth / (float)GRAPH_MAX_RESOLUTION
-      : 1.f;
-  x_angle_ratio = cg.refdef.fov_x / resolution;
-  ypos_scaled = a.graph_yh[0] * cgs.screenXScale;
-  hud_height_scaled = a.graph_yh[1] * cgs.screenXScale;
-  zero_gap_scaled = accel_condensed_size.value  * cgs.screenXScale;
-  line_size_scaled = accel_line_size.value * cgs.screenXScale;
-  vline_size_scaled = accel_vline_size.value * cgs.screenXScale;
-  predict_offset_scaled = accel_predict_offset.value * cgs.screenXScale;
-  predict_crouchjump_offset_scaled = accel_predict_crouchjump_offset.value * cgs.screenXScale;
-  vel_angle = atan2f(a.pm_ps.velocity[1], a.pm_ps.velocity[0]);
-  yaw = DEG2RAD(a.pm_ps.viewangles[YAW]);
-  color_alternate = 0;
-  edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
-  edge_min_size_scaled = accel_edge_min_size.value * cgs.screenXScale;
-  edge_height_scaled = accel_edge_height.value * cgs.screenXScale;
-  edge_min_height_scaled = accel_edge_min_height.value * cgs.screenXScale;
-  edge_voffset_scaled = accel_edge_voffset.value * cgs.screenXScale;
-  window_center_size_scaled = accel_window_center_size.value * cgs.screenXScale;
-  window_center_min_size_scaled = accel_window_center_min_size.value * cgs.screenXScale;
-  window_center_height_scaled = accel_window_center_height.value * cgs.screenXScale;
-  window_center_min_height_scaled = accel_window_center_min_height.value * cgs.screenXScale;
-  window_center_voffset_scaled = accel_window_center_voffset.value * cgs.screenXScale;
-  aim_zone_size_scaled = accel_aim_zone_size.value * cgs.screenXScale;
-  aim_zone_min_size_scaled = accel_aim_zone_min_size.value * cgs.screenXScale;
-  aim_zone_height_scaled = accel_aim_zone_height.value * cgs.screenXScale;
-  aim_zone_min_height_scaled = accel_aim_zone_min_height.value * cgs.screenXScale;
-  aim_zone_voffset_scaled = accel_aim_zone_voffset.value * cgs.screenXScale;
-  base_height_scaled = accel_base_height.value * cgs.screenXScale;
-  max_height_scaled = accel_max_height.value * cgs.screenXScale;
-  vcenter_offset_scaled = accel_vcenter_offset.value * cgs.screenXScale;
-
-
-  predict = 0;
-  predict_window = 0;
-  order = 0; // intentionally here in case we predict both sides to prevent the rare case of adjecent false positive
-
-  signed char key_forwardmove = a.pm.cmd.forwardmove,
-      key_rightmove = a.pm.cmd.rightmove,
-      key_upmove = a.pm.cmd.upmove;
+  // save original keys
+  signed char key_forwardmove = game.pm.cmd.forwardmove,
+      key_rightmove = game.pm.cmd.rightmove,
+      key_upmove = game.pm.cmd.upmove;
 
   // * predictions *
 
   int fm_case;
 
   // cpm
-  if(a.pm_ps.pm_flags & PMF_PROMODE)
+  if(game.pm_ps.pm_flags & PMF_PROMODE)
   {
     if(accel_p_strafe_w_sm.integer && !key_forwardmove && key_rightmove){
       // strafe predict
-      a.pm.cmd.forwardmove = scale;
-      a.pm.cmd.rightmove   = scale;
+      game.pm.cmd.forwardmove = game.move_scale;
+      game.pm.cmd.rightmove   = key_rightmove;
       predict = PREDICT_SM_STRAFE;
-      predict_window = accel_p_strafe_w_sm.integer & ACCEL_MOVE_PREDICT_WINDOW;
-      move();
+      predict_window = accel_p_strafe_w_sm.integer & ACCEL_PREDICT_MOVE_WINDOW;
+      move_predict(predict, predict_window);
       // opposite side
-      a.pm.cmd.rightmove *= -1;
-      move();
+      game.pm.cmd.rightmove *= -1;
+      move_predict(predict, predict_window);
     }
 
-    fm_case = accel_p_strafe_w_fm.integer & ACCEL_MOVE_PREDICT && key_forwardmove && !key_rightmove;
+    fm_case = accel_p_strafe_w_fm.integer & ACCEL_PREDICT_MOVE && key_forwardmove && !key_rightmove;
     if(fm_case || (accel_p_strafe_w_nk.integer && !key_forwardmove && !key_rightmove)){
       // strafe predict
-      a.pm.cmd.forwardmove = scale;
-      a.pm.cmd.rightmove   = scale;
+      game.pm.cmd.forwardmove = game.move_scale;
+      game.pm.cmd.rightmove   = game.move_scale;
       predict = PREDICT_FMNK_STRAFE;
-      predict_window = fm_case ? accel_p_strafe_w_fm.integer & ACCEL_MOVE_PREDICT_WINDOW : accel_p_strafe_w_nk.integer & ACCEL_MOVE_PREDICT_WINDOW;
-      move();
+      predict_window = fm_case ? accel_p_strafe_w_fm.integer & ACCEL_PREDICT_MOVE_WINDOW : accel_p_strafe_w_nk.integer & ACCEL_PREDICT_MOVE_WINDOW;
+      move_predict(predict, predict_window);
       // opposite side
-      a.pm.cmd.rightmove *= -1;
-      move();
+      game.pm.cmd.rightmove *= -1;
+      move_predict(predict, predict_window);
       // return; // no longer in use as we have show_move
     }
 
     // predict same move just opposite side
     if(accel_p_strafe_w_strafe.integer && key_forwardmove && key_rightmove)
     {
-      predict_window = accel_p_strafe_w_strafe.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      predict_window = accel_p_strafe_w_strafe.integer & ACCEL_PREDICT_MOVE_WINDOW;
       predict = PREDICT_OPPOSITE;
-      a.pm.cmd.forwardmove = scale; // why not key_forwardmove here ?
-      a.pm.cmd.rightmove = key_rightmove * -1;
-      move();
+      game.pm.cmd.forwardmove = key_forwardmove;
+      game.pm.cmd.rightmove = key_rightmove * -1;
+      move_predict(predict, predict_window);
     }
   }
   else // vq3
   {
     if(accel_p_strafe_w_sm_vq3.integer && !key_forwardmove && key_rightmove){
       // strafe predict
-      a.pm.cmd.forwardmove = scale;
-      a.pm.cmd.rightmove   = scale;
+      game.pm.cmd.forwardmove = game.move_scale;
+      game.pm.cmd.rightmove   = key_rightmove;
       predict = PREDICT_SM_STRAFE_ADD;
-      predict_window = accel_p_strafe_w_sm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
-      move();
-      a.pm.cmd.rightmove *= -1;
-      move();
+      predict_window = accel_p_strafe_w_sm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
+      move_predict(predict, predict_window);
+      // opposite side
+      game.pm.cmd.rightmove *= -1;
+      move_predict(predict, predict_window);
     }
 
-    fm_case = accel_p_strafe_w_fm_vq3.integer & ACCEL_MOVE_PREDICT && key_forwardmove && !key_rightmove;
+    fm_case = accel_p_strafe_w_fm_vq3.integer & ACCEL_PREDICT_MOVE && key_forwardmove && !key_rightmove;
     if(fm_case || (accel_p_strafe_w_nk_vq3.integer && !key_forwardmove && !key_rightmove)){
       // strafe predict
-      a.pm.cmd.forwardmove = scale;
-      a.pm.cmd.rightmove   = scale;
+      game.pm.cmd.forwardmove = game.move_scale;
+      game.pm.cmd.rightmove   = game.move_scale;
       predict = PREDICT_FMNK_STRAFE;
-      predict_window = fm_case ? accel_p_strafe_w_fm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW : accel_p_strafe_w_nk_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
-      move();
+      predict_window = fm_case ? accel_p_strafe_w_fm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW : accel_p_strafe_w_nk_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
+      move_predict(predict, predict_window);
       // opposite side
-      a.pm.cmd.rightmove *= -1;
-      move();
+      game.pm.cmd.rightmove *= -1;
+      move_predict(predict, predict_window);
     }
 
-    fm_case = accel_p_sm_w_fm_vq3.integer & ACCEL_MOVE_PREDICT && key_forwardmove && !key_rightmove;
+    fm_case = accel_p_sm_w_fm_vq3.integer & ACCEL_PREDICT_MOVE && key_forwardmove && !key_rightmove;
     if(fm_case || (accel_p_sm_w_nk_vq3.integer && !key_forwardmove && !key_rightmove)){
       // sidemove predict
-      predict_window = fm_case ? accel_p_sm_w_fm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW : accel_p_sm_w_nk_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      predict_window = fm_case ? accel_p_sm_w_fm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW : accel_p_sm_w_nk_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
       predict = PREDICT_FMNK_SM;
-      a.pm.cmd.forwardmove = 0;
-      a.pm.cmd.rightmove   = scale;
-      move();
-      a.pm.cmd.rightmove *= -1;
-      move();
+      game.pm.cmd.forwardmove = 0;
+      game.pm.cmd.rightmove   = game.move_scale;
+      move_predict(predict, predict_window);
+      // opposite side
+      game.pm.cmd.rightmove *= -1;
+      move_predict(predict, predict_window);
     }
 
     // predict same move just opposite side
     if(accel_p_strafe_w_strafe_vq3.integer && key_forwardmove && key_rightmove)
     {
-      predict_window = accel_p_strafe_w_strafe_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      predict_window = accel_p_strafe_w_strafe_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
       predict = PREDICT_OPPOSITE;
-      a.pm.cmd.forwardmove = scale; // why not key_forwardmove here ?
-      a.pm.cmd.rightmove = key_rightmove * -1;
-      move();
+      game.pm.cmd.forwardmove = key_forwardmove;
+      game.pm.cmd.rightmove = key_rightmove * -1;
+      move_predict(predict, predict_window);
     }
 
     // predict same move just opposite side
     if(accel_p_sm_w_sm_vq3.integer && !key_forwardmove && key_rightmove)
     {
-      predict_window = accel_p_sm_w_sm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+      predict_window = accel_p_sm_w_sm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
       // a/d oposite only for vq3
       predict = PREDICT_OPPOSITE;
-      a.pm.cmd.forwardmove = 0; // why not key_forwardmove here ?
-      a.pm.cmd.rightmove = key_rightmove * -1;
-      move();
+      game.pm.cmd.forwardmove = 0;
+      game.pm.cmd.rightmove = key_rightmove * -1;
+      move_predict(predict, predict_window);
     }
 
     if(accel_p_sm_w_strafe_vq3.integer && key_forwardmove && key_rightmove){
       // the sidemove predict
-      a.pm.cmd.forwardmove = 0;
-      a.pm.cmd.rightmove   = scale;
+      game.pm.cmd.forwardmove = 0;
+      game.pm.cmd.rightmove   = key_rightmove;
       predict = PREDICT_STRAFE_SM;
-      predict_window = accel_p_sm_w_strafe_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
-      move();
-      a.pm.cmd.rightmove *= -1;
-      move();
+      predict_window = accel_p_sm_w_strafe_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
+      move_predict(predict, predict_window);
+      // opposite side
+      game.pm.cmd.rightmove *= -1;
+      move_predict(predict, predict_window);
     }
   }
 
-  // crouchjump overdraw
-  if(!accel_crouchjump_overdraw.value){
+  // crouchjump
+  if(!accel_p_cj_overdraw.value){
     LABEL_CJ_OVERDRAW: 
     // cpm
-    if(a.pm_ps.pm_flags & PMF_PROMODE)
+    if(game.pm_ps.pm_flags & PMF_PROMODE)
     {
       // predict same move while jumping / crouching 
       if(accel_p_cj_w_strafe.integer && key_forwardmove && key_rightmove)
       {
-        predict_window = accel_p_cj_w_strafe.integer & ACCEL_MOVE_PREDICT_WINDOW;
+        predict_window = accel_p_cj_w_strafe.integer & ACCEL_PREDICT_MOVE_WINDOW;
         predict = PREDICT_CROUCHJUMP;
-        a.pm.cmd.forwardmove = key_forwardmove;
-        a.pm.cmd.rightmove = key_rightmove;
-        a.pm.cmd.upmove = scale;
-        move();
+        game.pm.cmd.forwardmove = key_forwardmove;
+        game.pm.cmd.rightmove = key_rightmove;
+        game.pm.cmd.upmove = game.move_scale;
+        move_predict(predict, predict_window);
       }
     }
     else // vq3
@@ -793,28 +971,28 @@ static void PmoveSingle(void)
       // predict same move while jumping / crouching // following block is doubled with different accel_crouchjump_overdraw after regular move
       if(accel_p_cj_w_strafe_vq3.integer && key_forwardmove && key_rightmove)
       {
-        predict_window = accel_p_cj_w_strafe_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+        predict_window = accel_p_cj_w_strafe_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
         predict = PREDICT_CROUCHJUMP;
-        a.pm.cmd.forwardmove = key_forwardmove;
-        a.pm.cmd.rightmove = key_rightmove;
-        a.pm.cmd.upmove = scale;
-        move();
+        game.pm.cmd.forwardmove = key_forwardmove;
+        game.pm.cmd.rightmove = key_rightmove;
+        game.pm.cmd.upmove = game.move_scale;
+        move_predict(predict, predict_window);
       }
 
       // predict same move while jumping / crouching // following block is doubled with different accel_crouchjump_overdraw after regular move
       if(accel_p_cj_w_sm_vq3.integer && !key_forwardmove && key_rightmove)
       {
-        predict_window = accel_p_cj_w_sm_vq3.integer & ACCEL_MOVE_PREDICT_WINDOW;
+        predict_window = accel_p_cj_w_sm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
         // a/d only for vq3
         predict = PREDICT_CROUCHJUMP;
-        a.pm.cmd.forwardmove = key_forwardmove;
-        a.pm.cmd.rightmove = key_rightmove;
-        a.pm.cmd.upmove = scale;
-        move();
+        game.pm.cmd.forwardmove = key_forwardmove;
+        game.pm.cmd.rightmove = key_rightmove;
+        game.pm.cmd.upmove = game.move_scale;
+        move_predict(predict, predict_window);
       }
     }
 
-    if(accel_crouchjump_overdraw.value){
+    if(accel_p_cj_overdraw.value){
       // in case we get here by goto overdraw
       return;
     }
@@ -823,174 +1001,155 @@ static void PmoveSingle(void)
 
   if((key_forwardmove && key_rightmove // strafe
         && (
-          (a.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_STRAFE))
-          || (!(a.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_STRAFE))
+          (game.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_STRAFE))
+          || (!(game.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_STRAFE))
         ))
       || (!key_forwardmove && key_rightmove // sidemove
         && (
-          (a.pm_ps.pm_flags & PMF_PROMODE // cpm
+          (game.pm_ps.pm_flags & PMF_PROMODE // cpm
             && (
-              (!a.pml.walking && !(accel_show_move.integer & ACCEL_MOVE_SIDE))
-              || (a.pml.walking && !(accel_show_move.integer & ACCEL_MOVE_SIDE_GROUNDED))
+              (!game.pml.walking && !(accel_show_move.integer & ACCEL_MOVE_SIDE))
+              || (game.pml.walking && !(accel_show_move.integer & ACCEL_MOVE_SIDE_GROUNDED))
             )
           )
-          || (!(a.pm_ps.pm_flags & PMF_PROMODE) // vq3
+          || (!(game.pm_ps.pm_flags & PMF_PROMODE) // vq3
             && (
-              (!a.pml.walking && !(accel_show_move_vq3.integer & ACCEL_MOVE_SIDE))
-              || (a.pml.walking && !(accel_show_move_vq3.integer & ACCEL_MOVE_SIDE_GROUNDED))
+              (!game.pml.walking && !(accel_show_move_vq3.integer & ACCEL_MOVE_SIDE))
+              || (game.pml.walking && !(accel_show_move_vq3.integer & ACCEL_MOVE_SIDE_GROUNDED))
             )
           )
         ))
       || (key_forwardmove && !key_rightmove // forwardmove
         && (
-          (a.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_FORWARD))
-          || (!(a.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_FORWARD))
+          (game.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_FORWARD))
+          || (!(game.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_FORWARD))
         ))
   ){
-    if(accel_crouchjump_overdraw.value){
+    if(accel_p_cj_overdraw.value){
       goto LABEL_CJ_OVERDRAW;
     }
     return; // -> regular move is disabled
   }
 
   // restore original keys
-  a.pm.cmd.forwardmove = key_forwardmove;
-  a.pm.cmd.rightmove   = key_rightmove;
-  a.pm.cmd.upmove      = key_upmove;
-
-  // reset predict
-  predict = PREDICT_NONE;
-  predict_window = 0;
+  game.pm.cmd.forwardmove = key_forwardmove;
+  game.pm.cmd.rightmove   = key_rightmove;
+  game.pm.cmd.upmove      = key_upmove;
 
   // regular move
   move();
  
-  if(accel_crouchjump_overdraw.value){
+  if(accel_p_cj_overdraw.value){
     goto LABEL_CJ_OVERDRAW;
   }
 }
 
-static void set_color_inc_pred(int regular)
+// there is basically only one place where this functions is used, why not just move the code there ?
+inline static void set_color_pred(int predict)
 {
   switch(predict){
     case PREDICT_OPPOSITE:{
-      ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_OPPOSITE], color_tmp);
-      trap_R_SetColor(color_tmp);
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_opposite_rgbam)]);
       break;
     }
     case PREDICT_SM_STRAFE:
     case PREDICT_FMNK_STRAFE:
     case PREDICT_SM_STRAFE_ADD:{
-      ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_WAD], color_tmp);
-      trap_R_SetColor(color_tmp);
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_strafe_rgbam)]);
       break;
     }
     case PREDICT_FMNK_SM:
     case PREDICT_STRAFE_SM:{
-      ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_AD], color_tmp);
-      trap_R_SetColor(color_tmp);
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_sidemove_rgbam)]);
       break;
     }
     case PREDICT_CROUCHJUMP:{
-      ColorAdd(a.graph_rgba[regular], a.graph_rgba[RGBA_I_PREDICT_CROUCHJUMP], color_tmp);
-      trap_R_SetColor(color_tmp);
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_cj_rgbam)]);
       break;
     }
     case 0:
     default:{
-      trap_R_SetColor(a.graph_rgba[regular]);
+      // we are not predicting atm
+      ASSERT_TRUE(0);
     }
   }
 }
 
-inline static void add_projection_x(float *x, float *w)
+// convenience only
+inline static void set_color(int id)
 {
-  if(mdd_projection.integer == 1) return;
-
-  const float half_fov_x = cg.refdef.fov_x / 2;
-  const float half_screen_width = cgs.glconfig.vidWidth / 2.f;
-
-  float angle = 0;
-  float proj_x = 0, proj_w = 0;
-
-  switch(mdd_projection.integer){
-    case 0:
-      angle = (*x / half_screen_width - 1) * half_fov_x;
-      proj_x = half_screen_width * (1 + tanf(angle) / tanf(half_fov_x));
-      angle = ((*x + *w) / half_screen_width - 1) * half_fov_x;
-      proj_w = (half_screen_width * (1 + tanf(angle) / tanf(half_fov_x))) - proj_x;
-      break;
-    // case 1:
-    //   angle = (*x / half_screen_width - 1) * half_fov_x;
-    //   proj_x = half_screen_width * (1 + angle / half_fov_x);
-    //   angle = ((*x + *w) / half_screen_width - 1) * half_fov_x;
-    //   proj_w = (half_screen_width * (1 + angle / half_fov_x)) - proj_x;
-    //   break;
-    case 2:
-      angle = (*x / half_screen_width - 1) * half_fov_x;
-      proj_x = half_screen_width * (1 + tanf(angle / 2) / tanf(half_fov_x / 2));
-      angle = ((*x + *w) / half_screen_width - 1) * half_fov_x;
-      proj_w = (half_screen_width * (1 + tanf(angle / 2) / tanf(half_fov_x / 2))) - proj_x;
-      break;
-  }
-
-  *x = proj_x;
-  *w = proj_w;
+  trap_R_SetColor(a.colors[id]);
 }
+
 
 // does not set color
 // automatic vertical centering
+// do not use for prediction
 inline static void draw_positive(float x, float y, float w, float h)
 {
   add_projection_x(&x, &w);
 
-  float y_target = y - zero_gap_scaled / 2;
+  vertical_center(&y, h);
 
-  if(predict){
-    y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
-  }
-
-  if(accel.integer & ACCEL_VCENTER){
-    y_target -= vcenter_offset_scaled - h / 2; // is h always positible ? might need abs here
-  }
-
-  trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+  trap_R_DrawStretchPic(x, y, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
 // does not set color
-// custom vertical centering
-inline static void draw_positive_vc(float x, float y, float w, float h, float vh)
+// automatic vertical centering
+// ment to be used for predictions -> because of offset
+inline static void draw_positive_o(float x, float y, float w, float h, float offset)
 {
   add_projection_x(&x, &w);
 
-  float y_target = y - zero_gap_scaled / 2;
+  vertical_center(&y, h);
 
-  if(predict){
-    y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
-  }
-
-  if(accel.integer & ACCEL_VCENTER){
-    y_target -= vcenter_offset_scaled - vh / 2; // is h always positible ? might need abs here
-  }
-
-  trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+  trap_R_DrawStretchPic(x, y + offset, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
+
+// (was used only for line mode)
+// // does not set color
+// // custom vertical centering
+// inline static void draw_positive_vc(float x, float y, float w, float h, float vh)
+// {
+//   add_projection_x(&x, &w);
+
+//   float y_target = y - zero_gap_scaled / 2;
+
+//   if(predict){
+//     y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
+//   }
+
+//   if(accel.integer & ACCEL_VCENTER){
+//     y_target -= vcenter_offset_scaled - vh / 2; // is h always positive ? might need abs here
+//   }
+
+//   trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+// }
 
 
 // does not set color
 // no vertical centering
-// used for fetures with its own vcenter settings (edges, aim_zone, window_center)
-inline static void draw_positive_nvc(float x, float y, float w, float h)
+// used for fetures with its own vcenter settings (edges, window_end)
+// should be called indirectly like draw_positive_edge, draw_positive_window_end
+inline static void _draw_positive_nvc(float x, float y, float w, float h)
 {
   add_projection_x(&x, &w);
 
-  float y_target = y - zero_gap_scaled / 2;
+  trap_R_DrawStretchPic(x, y, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+}
 
-  if(predict){
-    y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
-  }
+// does not set color
+// no vertical centering
+// used for fetures with its own vcenter settings (edges, window_end)
+inline static void draw_positive_o_nvc(float x, float y, float w, float h, float offset)
+{
+  add_projection_x(&x, &w);
 
-  trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+  // if(predict){
+  //   y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
+  // }
+
+  trap_R_DrawStretchPic(x, y + offset, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
 // does not set color
@@ -1002,75 +1161,76 @@ inline static void draw_negative(float x, float y, float w, float h)
   float y_target;
 
   if(accel.integer & ACCEL_NEG_UP){
-    y_target = ypos_scaled - zero_gap_scaled / 2 - h;
+    y_target = a.hud_ypos_scaled - a.neg_offset_scaled - h;
   }else{
-    y_target = (y - h) + zero_gap_scaled / 2;
+    y_target = (y - h) + a.neg_offset_scaled;
   }
 
   if(accel.integer & ACCEL_VCENTER){
     if(accel.integer & ACCEL_NEG_UP){
-      y_target -= vcenter_offset_scaled - h / 2;
+      y_target -= a.vcenter_offset_scaled - h / 2;
     }
     else
     {
-      y_target += vcenter_offset_scaled - h / 2;
+      y_target += a.vcenter_offset_scaled - h / 2;
     }
   }
   
   trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
-// does not set color
-// custom vertical centering
-inline static void draw_negative_vc(float x, float y, float w, float h, float vh)
-{
-  add_projection_x(&x, &w);
+// (was used only for line mode)
+// // does not set color
+// // custom vertical centering
+// inline static void draw_negative_vc(float x, float y, float w, float h, float vh)
+// {
+//   add_projection_x(&x, &w);
 
-  float y_target;
+//   float y_target;
 
-  if(accel.integer & ACCEL_NEG_UP){
-    y_target = ypos_scaled - zero_gap_scaled / 2 - (y - ypos_scaled);
-  }else{
-    y_target = (y - h) + zero_gap_scaled / 2;
-  }
+//   if(accel.integer & ACCEL_NEG_UP){
+//     y_target = ypos_scaled - zero_gap_scaled / 2 - (y - ypos_scaled);
+//   }else{
+//     y_target = (y - h) + zero_gap_scaled / 2;
+//   }
 
-  if(accel.integer & ACCEL_VCENTER){
-    if(accel.integer & ACCEL_NEG_UP){
-      y_target -= vcenter_offset_scaled - vh / 2;
-    }
-    else
-    {
-      y_target += vcenter_offset_scaled - vh / 2;
-    }
-  }
+//   if(accel.integer & ACCEL_VCENTER){
+//     if(accel.integer & ACCEL_NEG_UP){
+//       y_target -= vcenter_offset_scaled - vh / 2;
+//     }
+//     else
+//     {
+//       y_target += vcenter_offset_scaled - vh / 2;
+//     }
+//   }
   
-  trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
-}
+//   trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
+// }
 
 //static void (*draw_polar)(const graph_bar * const, int, float, float);
-inline static void _draw_vline(const graph_bar * const bar, int side, float y_offset, float vline_height)
-{
-  if(bar->polarity > 0)
-  {
-    set_color_inc_pred(accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_POS);
-    draw_positive(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
-  }
-  else {
-    set_color_inc_pred(accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_NEG);
-    draw_negative(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + bar->polarity * y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
-  }
-}
+// inline static void _draw_vline(const graph_bar * const bar, int side, float y_offset, float vline_height)
+// {
+//   if(bar->polarity > 0)
+//   {
+//     set_color_inc_pred(accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_POS);
+//     draw_positive(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
+//   }
+//   else {
+//     set_color_inc_pred(accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_NEG);
+//     draw_negative(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + bar->polarity * y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
+//   }
+// }
 
-inline static void vline_to(const graph_bar * const bar, int side, float dist_to_zero)
-{
-  if(accel_vline.integer & ACCEL_VL_LINE_H)
-  {
-    _draw_vline(bar, side, 0, dist_to_zero);
-  }
-  else if(dist_to_zero > line_size_scaled) {
-    _draw_vline(bar, side, line_size_scaled, dist_to_zero - line_size_scaled);
-  }
-}
+// inline static void vline_to(const graph_bar * const bar, int side, float dist_to_zero)
+// {
+//   if(accel_vline.integer & ACCEL_VL_LINE_H)
+//   {
+//     _draw_vline(bar, side, 0, dist_to_zero);
+//   }
+//   else if(dist_to_zero > line_size_scaled) {
+//     _draw_vline(bar, side, line_size_scaled, dist_to_zero - line_size_scaled);
+//   }
+// }
 
 
 inline static float angle_short_radial_distance(float a_, float b_)
@@ -1090,7 +1250,7 @@ Handles both ground friction and water friction
 static void PM_Friction(vec3_t velocity_io)
 {
   // ignore slope movement
-  float const speed = a.pml.walking ? VectorLength2(velocity_io) : VectorLength(velocity_io);
+  float const speed = game.pml.walking ? VectorLength2(velocity_io) : VectorLength(velocity_io);
 
   if (speed < 1)
   {
@@ -1103,27 +1263,27 @@ static void PM_Friction(vec3_t velocity_io)
   // apply ground friction
   float drop = 0;
   if (
-    a.pm.waterlevel <= 1 && a.pml.walking && !(a.pml.groundTrace.surfaceFlags & SURF_SLICK) &&
-    !(a.pm_ps.pm_flags & PMF_TIME_KNOCKBACK))
+    game.pm.waterlevel <= 1 && game.pml.walking && !(game.pml.groundTrace.surfaceFlags & SURF_SLICK) &&
+    !(game.pm_ps.pm_flags & PMF_TIME_KNOCKBACK))
   {
     float const control = speed < pm_stopspeed ? pm_stopspeed : speed;
     drop += control * pm_friction * pm_frametime;
   }
 
   // apply water friction even if just wading
-  if (a.pm.waterlevel)
+  if (game.pm.waterlevel)
   {
-    drop += speed * (a.pm_ps.pm_flags & PMF_PROMODE ? .5f : pm_waterfriction) * a.pm.waterlevel * pm_frametime;
+    drop += speed * (game.pm_ps.pm_flags & PMF_PROMODE ? .5f : pm_waterfriction) * game.pm.waterlevel * pm_frametime;
   }
 
   // apply flying friction
-  if (a.pm_ps.powerups[PW_FLIGHT])
+  if (game.pm_ps.powerups[PW_FLIGHT])
   {
     drop += speed * pm_flightfriction * pm_frametime;
   }
 
   // this may cause bug in spectator mode
-  if (a.pm_ps.pm_type == PM_SPECTATOR)
+  if (game.pm_ps.pm_type == PM_SPECTATOR)
   {
     drop += speed * pm_spectatorfriction * pm_frametime;
   }
@@ -1178,7 +1338,7 @@ PM_ClipVelocity
 Slide off of the impacting surface
 ==================
 */
-static void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce ) {
+inline static void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbounce ) {
     float	backoff;
     float	change;
     int		i;
@@ -1200,7 +1360,7 @@ static void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float overbou
 
 // the function to calculate delta
 // does not modify a.pm_ps.velocity (not sure anymore since its edited to be used in old version)
-static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, int verbose){
+inline static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, int move_type, int verbose){
   int			i;
   float		addspeed, accelspeed, currentspeed;//, delta;
   vec3_t  velpredict;
@@ -1208,7 +1368,7 @@ static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float 
 
   (void)verbose;
   
-  VectorCopy(a.pm_ps.velocity, velocity);
+  VectorCopy(game.pm_ps.velocity, velocity);
 
   Sys_SnapVector(velocity); // solves bug in spectator mode
 
@@ -1234,23 +1394,23 @@ static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float 
   }
 
   // add aircontrol to predict velocity vector
-  if(move_type == MOVE_AIR_CPM && wishspeed && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove) PM_Aircontrol(wishdir, velpredict);
+  if(move_type == MOVE_AIR_CPM && wishspeed && !game.pm.cmd.forwardmove && game.pm.cmd.rightmove) PM_Aircontrol(wishdir, velpredict);
 
   // clipping
   if((move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK))
   {
     float speed = VectorLength(velpredict);
 
-    PM_ClipVelocity(velpredict, a.pml.groundTrace.plane.normal,
+    PM_ClipVelocity(velpredict, game.pml.groundTrace.plane.normal,
         velpredict, OVERCLIP );
         
     VectorNormalize(velpredict);
     VectorScale(velpredict, speed, velpredict);
   }
   else if((move_type == MOVE_AIR || move_type == MOVE_AIR_CPM)
-      && a.pml.groundPlane)
+      && game.pml.groundPlane)
   {
-    PM_ClipVelocity(velpredict, a.pml.groundTrace.plane.normal, velpredict, OVERCLIP );
+    PM_ClipVelocity(velpredict, game.pml.groundTrace.plane.normal, velpredict, OVERCLIP );
   }
 
   // add snapping to predict velocity vector
@@ -1259,20 +1419,19 @@ static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float 
   return VectorLength(velpredict) - VectorLength(velocity);
 }
 
-// + anticlock, - clock
-static void rotate_point_by_angle(vec_t vec[2], float rad){
+inline static void rotate_point_by_angle_cw(vec_t vec[2], float rad){
   vec_t temp[2];
   temp[0] = vec[0];
   temp[1] = vec[1];
 
-  vec[0] = cosf(rad) * temp[0] - sinf(rad) * temp[1];
-  vec[1] = sinf(rad) * temp[0] + cosf(rad) * temp[1];
+  vec[0] = cosf(rad) * temp[0] + sinf(rad) * temp[1];
+  vec[1] = -sinf(rad) * temp[0] + cosf(rad) * temp[1];
 }
 
-static int is_angle_within_bar(graph_bar *bar, float angle)
+// is not true when angle is equal to edge
+inline static int is_angle_within_bar(graph_bar *bar, float angle)
 {
-  
-  return bar->angle > angle && bar->angle - (bar->width / resolution_ratio) * x_angle_ratio < angle;
+  return bar->angle_start < angle && bar->angle_end > angle;
 }
 
 /*
@@ -1282,20 +1441,21 @@ PM_Accelerate
 Handles user intended acceleration
 ==============
 */
-static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_)
+static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_, int move_type)
 {
-  // these are allocation over and over again, we could save some cpu time by moving these to static 
-  int i, j, i_color, negative_draw_skip, color_alternate_origin = 0;
-  float y, dist_to_zero, dist_to_adj, height, line_height, speed_delta, center_angle = 0, angle_yaw_relative, normalizer, yaw_min_distance, yaw_distance;
+  // these are allocated over and over again, we could save some cpu time by moving these to static 
+  int i, /*j,*/ i_color, /*negative_draw_skip,*/ color_alternate_origin = 0;
+  float y, /*dist_to_zero, dist_to_adj,*/ height, /*line_height,*/ speed_delta, center_angle = 0, angle_yaw_relative, normalizer, yaw_min_distance, yaw_distance;
   vec3_t wishdir_rotated;
-  graph_bar *bar, *bar_adj, *bar_tmp, *window_bar = NULL, *center_bar = NULL;
+  graph_bar *bar, /**bar_adj,*/ *bar_tmp, *window_bar = NULL, *center_bar = NULL;
   graph_bar *it, *start, *end, *start_origin, *end_origin; // end is included in loop
+  int omit = 0;
 
   
   // theoretical maximum is: addspeed * sin(45) * 2, but in practice its way less
   // hardcoded for now
   // inacurate approximation
-  float norm_speed = VectorLength2(a.pm_ps.velocity);
+  float norm_speed = VectorLength2(game.pm_ps.velocity);
   // dynamic normalizer breaks at 7000ups (value goes negative at this point), since this is a approximation, we can't make it bullet proof, hence this hotfix:
   if(norm_speed > 6000){
     norm_speed = 6000;
@@ -1308,44 +1468,42 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   }
 
   // recalculate the graph
-  accel_graph_size = 0;
+  a.graph_size = 0;
   // cur_speed_delta = 1000.f; // just reset to nonsence value // not needed it imo
   // for each horizontal pixel
-  for(i = 0; i < resolution; ++i)
+  for(i = 0; i < a.resolution; ++i)
   {
-    angle_yaw_relative = (i - (resolution / 2.f)) * -1 * x_angle_ratio;
+    angle_yaw_relative = (i - (a.resolution / 2.f)) * a.x_angle_ratio;
 
-    if(i == center){
+    if(i == a.center){
       // the current (where the cursor points to)
         center_angle = angle_yaw_relative;
     }
     
     // rotating wishdir vector along whole x axis
     VectorCopy(wishdir, wishdir_rotated);
-    rotate_point_by_angle(wishdir_rotated, angle_yaw_relative);
+    rotate_point_by_angle_cw(wishdir_rotated, angle_yaw_relative);
 
     // special case wishdir related values need to be recalculated (accel)
-    if (move_type == MOVE_AIR_CPM && (!a.pm.cmd.rightmove || a.pm.cmd.forwardmove))
+    if (move_type == MOVE_AIR_CPM && (!game.pm.cmd.rightmove || game.pm.cmd.forwardmove))
     {
-      if(DotProduct(a.pm_ps.velocity, wishdir_rotated) < 0){
-        speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, 2.5f, 0);
+      if(DotProduct(game.pm_ps.velocity, wishdir_rotated) < 0){
+        speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, 2.5f, move_type, 0);
       }else{
-        speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, pm_airaccelerate, 0);
+        speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, pm_airaccelerate, move_type, 0);
       }
     }
     else
     {
-      speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, accel_, 0);
+      speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, accel_, move_type, 0);
     }
 
     if(
       // automatically omit negative accel when plotting predictions, also when negatives are disabled ofc
-      ((predict || accel_mode_neg.value == 0) && speed_delta <= 0)
-
-      // when delta doesn't reach threshold value then the bar is completely ommited (currently works for predictions also, could be controlled by another cvar in the future)
-      || fabs(speed_delta) < accel_threshold.value
+      speed_delta <= 0 && (predict || accel_neg_mode.value == 0)
     ){
-      order++; // just control variable to distinct between adjecent bars (i hate it !)
+      //order++; // just control variable to distinct between adjecent bars (i hate it !)
+      omit = 1;
       continue;
     }
 
@@ -1354,10 +1512,11 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       && accel_graph[accel_graph_size-1].value == speed_delta
       && accel_graph[accel_graph_size-1].order == order - 1 // since we are omitting sometimes this check is mandatory
     ){
-      accel_graph[accel_graph_size-1].width += resolution_ratio;
+      graph[graph_size-1].width += resolution_ratio;
+      graph[graph_size-1].angle_end = angle_yaw_relative;
     }
     else{
-      bar = &(accel_graph[accel_graph_size]);
+      bar = &(graph[graph_size]);
       bar->x = i * resolution_ratio;
       bar->polarity = speed_delta ? (speed_delta > 0 ? 1 : -1) : 0;
       bar->height = hud_height_scaled * (accel.integer & ACCEL_UNIFORM_VALUE ? bar->polarity : speed_delta / normalizer);
@@ -1367,54 +1526,58 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       if(fabsf(bar->height) > max_height_scaled){
         bar->height = max_height_scaled * (bar->height > 0 ? 1 : -1);
       }
-      bar->y = ypos_scaled + bar->height * -1; // * -1 because of y axis orientation
+      bar->y = hud_ypos_scaled + bar->height * -1; // * -1 because of y axis orientation
       bar->width = resolution_ratio;
       bar->value = speed_delta;
       bar->order = order++;
       bar->next = NULL;
-      bar->angle = angle_yaw_relative; // (left > 0, right < 0)
-      if(accel_graph_size){
-        bar->prev = &(accel_graph[accel_graph_size-1]);
-        accel_graph[accel_graph_size-1].next = bar;
+      bar->angle_start = angle_yaw_relative; // (left < 0, right > 0)
+      bar->angle_end = angle_yaw_relative; // (left < 0, right > 0)
+      if(__builtin_expect(graph_size, 1)){
+        bar->prev = &(graph[graph_size-1]);
+        graph[graph_size-1].next = bar;
       }else{
         bar->prev = NULL;
       }
 
-      ++accel_graph_size;
+      omit = 0;
+
+      ++graph_size;
     }
   }
 
-  if(!accel_graph_size) return;
+  if(!graph_size) return;
 
   // default
-  start = &(accel_graph[0]);
-  end = &(accel_graph[accel_graph_size-1]);
+  start = &(graph[0]);
+  end = &(graph[graph_size-1]);
 
   // merge bars (not pretty at all)
-  if(accel_merge_threshold.value && accel_graph_size >= 2)
+  if(accel_merge_threshold.value && graph_size >= 2)
   {
     int use_prev = 0;
-    for(i = 0; i < accel_graph_size; ++i){
-      bar = &(accel_graph[i]);
+    for(i = 0; i < graph_size; ++i){
+      bar = &(graph[i]);
       if(bar->width <= accel_merge_threshold.value){
+        // left most edge case
         if(bar->next && !bar->prev){
           bar->next->width += bar->width;
           bar->next->x = bar->x;
           start = bar->next;
           start->prev = NULL; // remove the edge bars
         }
+        // right most edge case
         else if(!bar->next && bar->prev){
           bar->prev->width += bar->width;
           end = bar->prev;
           end->next = NULL; // remove the edge bars
-          //prev_used = 1;
         }
+        // middle case
         else if(bar->next && bar->prev) // in case of merge we are not guaranteed to have both prev/next so check it
         { 
           use_prev = (fabsf(bar->value - bar->prev->value) < fabsf(bar->value - bar->next->value));
           if(bar->polarity == bar->prev->polarity && (bar->polarity != bar->next->polarity || use_prev)){
             bar->prev->width += bar->width;
-            //prev_used = 1;
           }
           else if(bar->polarity == bar->next->polarity && (bar->polarity != bar->prev->polarity || !use_prev)){
             bar->next->width += bar->width;
@@ -1424,8 +1587,9 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
             continue;
           }
 
-          bar->next->prev = bar->prev; // to skip current bar
-          bar->prev->next = bar->next; // to skip current bar
+          // skip current bar in bidirectional linked list
+          bar->next->prev = bar->prev;
+          bar->prev->next = bar->next;
 
           // fix order (ugly !)
           for(it = bar->next; it && it != end->next; it = it->next){
@@ -1445,7 +1609,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     {
       bar = it;  
       if(need_window && bar->polarity == 1){
-        yaw_distance = fabsf(angle_short_radial_distance(vel_angle, yaw + bar->angle));
+        yaw_distance = fabsf(angle_short_radial_distance(vel_angle, yaw_angle + bar->angle_start)); // potentially wrong (sign ?)
         if(yaw_min_distance > yaw_distance){
           yaw_min_distance = yaw_distance;
           window_bar = bar;
@@ -1484,7 +1648,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         (a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
     )
   ){
-    hightlight_swap = a.pm.cmd.rightmove > 0 ? 1 : -1;
+    hightlight_swap = game.pm.cmd.rightmove > 0 ? 1 : -1;
   } 
   
   // determine the start and end bars
@@ -1579,12 +1743,12 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         aim_zone_size_calculated = (accel_aim_zone_size.value / 100) * window_bar->width;
       }
       else{
-        aim_zone_size_calculated = aim_zone_size_scaled;
+        aim_zone_size_calculated = window_end_size_scaled;
       }
 
       // applying min size
-      if(aim_zone_size_calculated < aim_zone_min_size_scaled){
-        aim_zone_size_calculated = aim_zone_min_size_scaled;
+      if(aim_zone_size_calculated < window_end_min_size_scaled){
+        aim_zone_size_calculated = window_end_min_size_scaled;
       }
 
       // size check with actual window bar
@@ -1593,7 +1757,8 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         aim_zone_size_calculated = window_bar->width;
       }
       
-      if(angle_short_radial_distance(vel_angle, yaw + window_bar->angle) < 0){
+      // potentially wrong (sign ?)
+      if(angle_short_radial_distance(vel_angle, yaw_angle + window_bar->angle_start) < 0){
         aim_zone_on_right_side = 1;
       }
     }
@@ -1605,200 +1770,197 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   {
     bar = it;
 
-    negative_draw_skip = 0;
     do // dummy loop
     {
       // bar's drawing
       if(bar->polarity > 0)  // positive bar
       {
         // set colors
-        set_color_inc_pred(RGBA_I_POS);
-        i_color = RGBA_I_BORDER;
-        if(!predict){
+        if(predict){
+          set_color_pred(predict);
+        } else {
           if(bar == window_bar && (accel.integer & ACCEL_CUSTOM_WINDOW_COL || accel.integer & ACCEL_HL_WINDOW))
           {
-            if(center_bar && center_bar == window_bar && accel.integer & ACCEL_HL_WINDOW){
-              set_color_inc_pred(RGBA_I_WINDOW_HL);
-              i_color = RGBA_I_BORDER_WIDNOW_HL;
+            if(accel.integer & ACCEL_HL_WINDOW && center_bar == window_bar){ // && center_bar // unnecessary check
+              set_color(RGBA_I_WINDOW_HL);
             } else {
-              set_color_inc_pred(RGBA_I_WINDOW);
-              i_color = RGBA_I_BORDER_WIDNOW;
+              set_color(RGBA_I_WINDOW);
             }
-          } else if(accel.integer & ACCEL_HL_ACTIVE && center_bar && bar == center_bar){
-            set_color_inc_pred(RGBA_I_HL_POS);
-            i_color = RGBA_I_BORDER_HL_POS;
+          } else if(accel.integer & ACCEL_HL_ACTIVE && bar == center_bar){ // && center_bar // unnecessary check
+            set_color(RGBA_I_HL_POS);
           }
           // is swap highlight active and the current bar is the swap-to once 
           else if(hightlight_swap && center_bar && (bar == center_bar->next || bar == center_bar->prev) // here used to be index +/- hightlight_swap instead we now use prev/next
             // and the value is greater then current
             && bar->value > center_bar->value
           ){
-            set_color_inc_pred(RGBA_I_HL_G_ADJ);
-            i_color = RGBA_I_BORDER_HL_G_ADJ;
+            set_color(RGBA_I_HL_G_ADJ);
           }
           else if(accel.integer & ACCEL_COLOR_ALTERNATE){
             if(color_alternate){
-              set_color_inc_pred(RGBA_I_ALT);
-              i_color = RGBA_I_BORDER_ALT;
+              set_color(RGBA_I_ALT);
             }else{
-              set_color_inc_pred(RGBA_I_POS);
-              i_color = RGBA_I_BORDER;
+              set_color(RGBA_I_POS);
             }
             color_alternate = !color_alternate;
+          } else {
+            set_color(RGBA_I_POS);
           }
         }
         
         // height = ypos_scaled-bar->y;
         height = bar->height;
       
-        if(accel.integer & ACCEL_LINE_ACTIVE)
+        // if(accel.integer & ACCEL_LINE_ACTIVE)
+        // {
+        //   line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
+        //   // if border does not cover whole area, draw rest of the bar
+        //   if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
+        //   {
+        //     // draw uncovered area
+        //     if(!predict && bar == window_bar){
+        //       if(accel_window_center.integer){
+        //         // in case we draw window center we need to split the window bar to parts
+        //         if(window_parts_size > FLT_EPSILON * FLT_MIN)
+        //         {
+        //           if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){ // so ugly TODO: refactor
+        //             if(aim_zone_size_calculated < window_parts_size){ // one part is cutted
+        //               if(aim_zone_on_right_side){
+        //                 draw_positive_vc(bar->x, bar->y + line_height, window_parts_size, height - line_height, height);
+        //                 draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size - aim_zone_size_calculated, height - line_height, height);
+        //               }
+        //               else
+        //               {
+        //                 draw_positive_vc(bar->x + aim_zone_size_calculated, bar->y + line_height, window_parts_size - aim_zone_size_calculated, height - line_height, height);
+        //                 draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height, height);
+        //               }
+        //             }
+        //             else // one part is ommited
+        //             {
+        //               if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
+        //                 float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
+        //                 if(aim_zone_on_right_side){
+        //                   // cutted left part
+        //                   draw_positive_vc(bar->x, bar->y + line_height, window_parts_size - cut_size, height - line_height, height);
+        //                 }else{
+        //                   // cutted right part
+        //                   draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated + cut_size, bar->y + line_height, window_parts_size - cut_size, height - line_height, height);
+        //                 }
+        //               }
+        //               else
+        //               {
+        //                 if(aim_zone_on_right_side){
+        //                   // full left part
+        //                   draw_positive_vc(bar->x, bar->y + line_height, window_parts_size, height - line_height, height);
+        //                 }else{
+        //                   // full right part
+        //                   draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height, height);
+        //                 }
+        //               }
+        //             }
+        //           }
+        //           else // only window center without substration of aim zone
+        //           {
+        //             draw_positive_vc(bar->x, bar->y + line_height, window_parts_size, height - line_height, height);
+        //             draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height, height);
+        //           }
+        //         }// else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+        //       }
+        //       else // window center feature is disabled
+        //       {
+        //         if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){
+        //             if(aim_zone_on_right_side){
+        //               draw_positive_vc(bar->x, bar->y + line_height, bar->width - aim_zone_size_calculated, height - line_height, height);
+        //             }else{
+        //               draw_positive_vc(bar->x + aim_zone_size_calculated, bar->y + line_height, bar->width - aim_zone_size_calculated, height - line_height, height);
+        //             }
+        //         }
+        //         else
+        //         {
+        //           // just regular window/center bar no parts or cuts
+        //           draw_positive_vc(bar->x, bar->y + line_height, bar->width, height - line_height, height);
+        //         }
+        //       }
+        //     }
+        //     else // either predict or not window/center bar
+        //     {
+        //       draw_positive_vc(bar->x, bar->y + line_height, bar->width, height - line_height, height);
+        //     }
+        //   }
+        //   // draw border line
+        //   set_color_inc_pred(i_color);
+        //   if(!predict && bar == window_bar){
+        //     if(accel_window_center.integer){
+        //       // in case we draw window center we need to split the window bar to parts
+        //       if(window_parts_size > FLT_EPSILON * FLT_MIN)
+        //       {
+        //         if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){ // so ugly TODO: refactor
+        //           if(aim_zone_size_calculated < window_parts_size){ // one part is cutted
+        //             if(aim_zone_on_right_side){
+        //               draw_positive_vc(bar->x, bar->y, window_parts_size, line_height, height);
+        //               draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size - aim_zone_size_calculated, line_height, height);
+        //             }
+        //             else
+        //             {
+        //               draw_positive_vc(bar->x + aim_zone_size_calculated, bar->y, window_parts_size - aim_zone_size_calculated, line_height, height);
+        //               draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height, height);
+        //             }
+        //           }
+        //           else // one part is ommited
+        //           {
+        //             if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
+        //               float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
+        //               if(aim_zone_on_right_side){
+        //                 // cutted left part
+        //                 draw_positive_vc(bar->x, bar->y, window_parts_size - cut_size, line_height, height);
+        //               }else{
+        //                 // cutted right part
+        //                 draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated + cut_size, bar->y, window_parts_size - cut_size, line_height, height);
+        //               }
+        //             }
+        //             else
+        //             {
+        //               if(aim_zone_on_right_side){
+        //                 // full left part
+        //                 draw_positive_vc(bar->x, bar->y, window_parts_size, line_height, height);
+        //               }else{
+        //                 // full right part
+        //                 draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height, height);
+        //               }
+        //             }
+        //           }
+        //         }
+        //         else // only window center without substration of aim zone
+        //         {
+        //           draw_positive_vc(bar->x, bar->y, window_parts_size, line_height, height);
+        //           draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height, height);
+        //         }
+        //       } // else entire bar is handled as center so do not draw anything (window center drawing is done separately)
+        //     }
+        //     else // window center feature is disabled
+        //     {
+        //       if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){
+        //           if(aim_zone_on_right_side){
+        //             draw_positive_vc(bar->x, bar->y, bar->width - aim_zone_size_calculated, line_height, height);
+        //           }else{
+        //             draw_positive_vc(bar->x + aim_zone_size_calculated, bar->y, bar->width + aim_zone_size_calculated, line_height, height);
+        //           }
+        //       }
+        //       else
+        //       {
+        //         // just regular window/center bar no parts or cuts
+        //         draw_positive_vc(bar->x, bar->y, bar->width, line_height, height);
+        //       }
+        //     }
+        //   }
+        //   else // either predict or not window/center bar
+        //   {
+        //     draw_positive_vc(bar->x, bar->y, bar->width, line_height, height);
+        //   }
+        // }
+        // else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
+        // ^ cannot be disabled anymore
         {
-          line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
-          // if border does not cover whole area, draw rest of the bar
-          if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
-          {
-            // draw uncovered area
-            if(!predict && bar == window_bar){
-              if(accel_window_center.integer){
-                // in case we draw window center we need to split the window bar to parts
-                if(window_parts_size > FLT_EPSILON * FLT_MIN)
-                {
-                  if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){ // so ugly TODO: refactor
-                    if(aim_zone_size_calculated < window_parts_size){ // one part is cutted
-                      if(aim_zone_on_right_side){
-                        draw_positive_vc(bar->x, bar->y + line_height, window_parts_size, height - line_height, height);
-                        draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size - aim_zone_size_calculated, height - line_height, height);
-                      }
-                      else
-                      {
-                        draw_positive_vc(bar->x + aim_zone_size_calculated, bar->y + line_height, window_parts_size - aim_zone_size_calculated, height - line_height, height);
-                        draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height, height);
-                      }
-                    }
-                    else // one part is ommited
-                    {
-                      if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
-                        float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
-                        if(aim_zone_on_right_side){
-                          // cutted left part
-                          draw_positive_vc(bar->x, bar->y + line_height, window_parts_size - cut_size, height - line_height, height);
-                        }else{
-                          // cutted right part
-                          draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated + cut_size, bar->y + line_height, window_parts_size - cut_size, height - line_height, height);
-                        }
-                      }
-                      else
-                      {
-                        if(aim_zone_on_right_side){
-                          // full left part
-                          draw_positive_vc(bar->x, bar->y + line_height, window_parts_size, height - line_height, height);
-                        }else{
-                          // full right part
-                          draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height, height);
-                        }
-                      }
-                    }
-                  }
-                  else // only window center without substration of aim zone
-                  {
-                    draw_positive_vc(bar->x, bar->y + line_height, window_parts_size, height - line_height, height);
-                    draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y + line_height, window_parts_size, height - line_height, height);
-                  }
-                }// else entire bar is handled as center so do not draw anything (window center drawing is done separately)
-              }
-              else // window center feature is disabled
-              {
-                if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){
-                    if(aim_zone_on_right_side){
-                      draw_positive_vc(bar->x, bar->y + line_height, bar->width - aim_zone_size_calculated, height - line_height, height);
-                    }else{
-                      draw_positive_vc(bar->x + aim_zone_size_calculated, bar->y + line_height, bar->width - aim_zone_size_calculated, height - line_height, height);
-                    }
-                }
-                else
-                {
-                  // just regular window/center bar no parts or cuts
-                  draw_positive_vc(bar->x, bar->y + line_height, bar->width, height - line_height, height);
-                }
-              }
-            }
-            else // either predict or not window/center bar
-            {
-              draw_positive_vc(bar->x, bar->y + line_height, bar->width, height - line_height, height);
-            }
-          }
-          // draw border line
-          set_color_inc_pred(i_color);
-          if(!predict && bar == window_bar){
-            if(accel_window_center.integer){
-              // in case we draw window center we need to split the window bar to parts
-              if(window_parts_size > FLT_EPSILON * FLT_MIN)
-              {
-                if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){ // so ugly TODO: refactor
-                  if(aim_zone_size_calculated < window_parts_size){ // one part is cutted
-                    if(aim_zone_on_right_side){
-                      draw_positive_vc(bar->x, bar->y, window_parts_size, line_height, height);
-                      draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size - aim_zone_size_calculated, line_height, height);
-                    }
-                    else
-                    {
-                      draw_positive_vc(bar->x + aim_zone_size_calculated, bar->y, window_parts_size - aim_zone_size_calculated, line_height, height);
-                      draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height, height);
-                    }
-                  }
-                  else // one part is ommited
-                  {
-                    if(aim_zone_size_calculated > window_parts_size + window_center_size_calculated){ // the only part which we draw is cutted
-                      float cut_size = aim_zone_size_calculated - (window_parts_size + window_center_size_calculated);
-                      if(aim_zone_on_right_side){
-                        // cutted left part
-                        draw_positive_vc(bar->x, bar->y, window_parts_size - cut_size, line_height, height);
-                      }else{
-                        // cutted right part
-                        draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated + cut_size, bar->y, window_parts_size - cut_size, line_height, height);
-                      }
-                    }
-                    else
-                    {
-                      if(aim_zone_on_right_side){
-                        // full left part
-                        draw_positive_vc(bar->x, bar->y, window_parts_size, line_height, height);
-                      }else{
-                        // full right part
-                        draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height, height);
-                      }
-                    }
-                  }
-                }
-                else // only window center without substration of aim zone
-                {
-                  draw_positive_vc(bar->x, bar->y, window_parts_size, line_height, height);
-                  draw_positive_vc(bar->x + window_parts_size + window_center_size_calculated, bar->y, window_parts_size, line_height, height);
-                }
-              } // else entire bar is handled as center so do not draw anything (window center drawing is done separately)
-            }
-            else // window center feature is disabled
-            {
-              if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT && aim_zone_size_calculated > 0){
-                  if(aim_zone_on_right_side){
-                    draw_positive_vc(bar->x, bar->y, bar->width - aim_zone_size_calculated, line_height, height);
-                  }else{
-                    draw_positive_vc(bar->x + aim_zone_size_calculated, bar->y, bar->width + aim_zone_size_calculated, line_height, height);
-                  }
-              }
-              else
-              {
-                // just regular window/center bar no parts or cuts
-                draw_positive_vc(bar->x, bar->y, bar->width, line_height, height);
-              }
-            }
-          }
-          else // either predict or not window/center bar
-          {
-            draw_positive_vc(bar->x, bar->y, bar->width, line_height, height);
-          }
-        }
-        else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
           if(!predict && bar == window_bar){
             if(accel_window_center.integer){
               if(window_parts_size > FLT_EPSILON * FLT_MIN){
@@ -1868,8 +2030,8 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         }
       }
       else if(bar->polarity < 0){ // negative bar
-        if(accel_mode_neg.value != ACCEL_NEG_MODE_ENABLED && accel_mode_neg.value != ACCEL_NEG_MODE_ADJECENT) continue;
-        if((accel_mode_neg.value == ACCEL_NEG_MODE_ADJECENT)
+        if(accel_neg_mode.value != ACCEL_NEG_MODE_ENABLED && accel_neg_mode.value != ACCEL_NEG_MODE_ADJECENT) continue;
+        if((accel_neg_mode.value == ACCEL_NEG_MODE_ADJECENT)
             &&
             // is not positive left adjecent
             !(
@@ -1884,79 +2046,81 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
             )
           )
         {
-          negative_draw_skip = 1;
+          // negative_draw_skip = 1;
           continue;
         }
 
         if(accel.integer & ACCEL_HL_ACTIVE && center_bar && bar == center_bar)
         {
           set_color_inc_pred(RGBA_I_HL_NEG);
-          i_color = RGBA_I_BORDER_HL_NEG;
+          // i_color = RGBA_I_BORDER_HL_NEG;
         }
         else{
           set_color_inc_pred(RGBA_I_NEG);
-          i_color = RGBA_I_BORDER_NEG;
+          // i_color = RGBA_I_BORDER_NEG;
         }
 
         // height = (bar->y - ypos_scaled); // height should not be gapped imo need test // + zero_gap_scaled
         height = fabsf(bar->height);
 
-        if(accel.integer & ACCEL_LINE_ACTIVE)
+        // if(accel.integer & ACCEL_LINE_ACTIVE)
+        // {
+        //   line_height = (height > line_size_scaled ? line_size_scaled : height);
+        //   // if border does not cover whole area, draw rest of the bar
+        //   if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
+        //   {
+        //     // draw uncovered area 
+        //     draw_negative_vc(bar->x, bar->y - line_height, bar->width, height - line_height, height);
+        //   }
+        //   set_color_inc_pred(i_color);
+        //   draw_negative_vc(bar->x, bar->y, bar->width, line_height, height);
+        // }
+        // else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
+        // ^ cannot be disabled anymore
         {
-          line_height = (height > line_size_scaled ? line_size_scaled : height);
-          // if border does not cover whole area, draw rest of the bar
-          if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
-          {
-            // draw uncovered area 
-            draw_negative_vc(bar->x, bar->y - line_height, bar->width, height - line_height, height);
-          }
-          set_color_inc_pred(i_color);
-          draw_negative_vc(bar->x, bar->y, bar->width, line_height, height);
-        }
-        else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
           draw_negative(bar->x, bar->y, bar->width, height);
         }
       } // zero bars are separated
     } while(0);
 
     // vertical line's drawing
-    if(!negative_draw_skip && bar->value && accel.integer & ACCEL_VL_ACTIVE)
-    {
-      dist_to_zero = fabs(bar->y - ypos_scaled);
+    // if(!negative_draw_skip && bar->value && accel.integer & ACCEL_VL_ACTIVE)
+    // {
+    //   dist_to_zero = fabs(bar->y - ypos_scaled);
 
-      // for each side
-      for(j = -1; j <= 1; j+= 2)
-      {
-        bar_adj = j == -1 ? bar->prev : bar->next;
-        // check for adjecent and polarity
-        if(!bar_adj || bar->polarity != bar_adj->polarity || bar->order + j != bar_adj->order){
-          vline_to(bar, j, dist_to_zero);
-          continue;
-        }
+    //   // for each side
+    //   for(j = -1; j <= 1; j+= 2)
+    //   {
+    //     bar_adj = j == -1 ? bar->prev : bar->next;
+    //     // check for adjecent and polarity
+    //     if(!bar_adj || bar->polarity != bar_adj->polarity || bar->order + j != bar_adj->order){
+    //       vline_to(bar, j, dist_to_zero);
+    //       continue;
+    //     }
 
-        // we have adjecent bar and same polarity only case we need to calculate with the adjecent
+    //     // we have adjecent bar and same polarity only case we need to calculate with the adjecent
 
-        // skip vline for lower bar
-        if((bar->polarity == 1 && bar->value < bar_adj->value)
-              || (bar->polarity == -1 && bar->value > bar_adj->value)) continue;
+    //     // skip vline for lower bar
+    //     if((bar->polarity == 1 && bar->value < bar_adj->value)
+    //           || (bar->polarity == -1 && bar->value > bar_adj->value)) continue;
 
-        dist_to_adj = fabs(bar_adj->y - bar->y);
-        vline_to(bar, j, dist_to_adj + (accel_vline.integer & ACCEL_VL_LINE_H ? fmin(dist_to_zero - dist_to_adj, line_size_scaled) : 0));
-      }
-    } // /vlines
+    //     dist_to_adj = fabs(bar_adj->y - bar->y);
+    //     vline_to(bar, j, dist_to_adj + (accel_vline.integer & ACCEL_VL_LINE_H ? fmin(dist_to_zero - dist_to_adj, line_size_scaled) : 0));
+    //   }
+    // } // /vlines
   } // /for each bar
 
   // window center drawing (this one is specific to window bar so no need to have it in bar loop)
   if(!predict && window_bar){
     if(accel_window_center.integer){
       // would be easier to create actual or just helper bar and just pass it to the is_within_angle function
-      if(accel_window_center.integer & ACCEL_WINDOW_CENTER_HL && window_bar->angle - (window_parts_size / resolution_ratio) * x_angle_ratio > center_angle && window_bar->angle - ((window_parts_size + window_center_size_calculated) / resolution_ratio) * x_angle_ratio < center_angle){
+      if(accel_window_center.integer & ACCEL_WINDOW_CENTER_HL && window_bar->angle - window_parts_size * resolution_ratio_inv * x_angle_ratio > center_angle && window_bar->angle - (window_parts_size + window_center_size_calculated) * resolution_ratio_inv * x_angle_ratio < center_angle){
         set_color_inc_pred(RGBA_I_WINDOW_CENTER_HL);
-        i_color = RGBA_I_BORDER_WINDOW_CENTER_HL;
+        // i_color = RGBA_I_BORDER_WINDOW_CENTER_HL;
       }
       else{
         set_color_inc_pred(RGBA_I_WINDOW_CENTER);
-        i_color = RGBA_I_BORDER_WINDOW_CENTER;
+        // i_color = RGBA_I_BORDER_WINDOW_CENTER;
       }
       //height = ypos_scaled - window_bar->y;
       height = window_bar->height;
@@ -1973,65 +2137,67 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       if(((accel_window_center.integer & ACCEL_WINDOW_CENTER_VCENTER_FORCE) && (accel_window_center.integer & ACCEL_WINDOW_CENTER_VCENTER))
         || (!(accel_window_center.integer & ACCEL_WINDOW_CENTER_VCENTER_FORCE) && (accel.integer & ACCEL_VCENTER))
       ){
-        y_target = ypos_scaled - vcenter_offset_scaled - height / 2;
+        y_target = hud_ypos_scaled - vcenter_offset_scaled - height / 2;
       }else{
-        y_target = ypos_scaled - height;
+        y_target = hud_ypos_scaled - height;
       }
 
       if(accel_window_center_voffset.value > 0){
         y_target -= window_center_voffset_scaled;
       }
 
-      if(accel.integer & ACCEL_LINE_ACTIVE)
+      // if(accel.integer & ACCEL_LINE_ACTIVE)
+      // {
+      //   line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
+      //   // if border does not cover whole area, draw rest of the bar
+      //   if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
+      //   {
+      //     // draw uncovered area
+      //     if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT){
+      //       if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
+      //         float cut_size = aim_zone_size_calculated - window_parts_size;
+      //         if(aim_zone_on_right_side){
+      //           draw_positive_nvc(window_bar->x + window_parts_size, y_target + line_height, window_center_size_calculated - cut_size, height - line_height);
+      //         }
+      //         else
+      //         {
+      //           draw_positive_nvc(window_bar->x + window_parts_size + cut_size, y_target + line_height, window_center_size_calculated - cut_size, height - line_height);
+      //         }
+      //       } else if(aim_zone_size_calculated < window_parts_size){
+      //         // no cutting needed
+      //         draw_positive_nvc(window_bar->x + window_parts_size, y_target + line_height, window_center_size_calculated, height - line_height);
+      //       } // else whole center is cutted off
+      //     }
+      //     else // no subtraction of aim zone
+      //     {
+      //       draw_positive_nvc(window_bar->x + window_parts_size, y_target + line_height, window_center_size_calculated, height - line_height);
+      //     }
+      //   }
+      //   // draw border line
+      //   set_color_inc_pred(i_color);
+      //   if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT){
+      //     if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
+      //       float cut_size = aim_zone_size_calculated - window_parts_size;
+      //       if(aim_zone_on_right_side){
+      //         draw_positive_nvc(window_bar->x + window_parts_size, y_target, window_center_size_calculated - cut_size, line_height);
+      //       }
+      //       else
+      //       {
+      //         draw_positive_nvc(window_bar->x + window_parts_size + cut_size, y_target, window_center_size_calculated - cut_size, line_height);
+      //       }
+      //     } else if(aim_zone_size_calculated < window_parts_size){
+      //       // no cutting needed
+      //       draw_positive_nvc(window_bar->x + window_parts_size, y_target, window_center_size_calculated, line_height);
+      //     } // else whole center is cutted off
+      //   }
+      //   else // no subtraction of aim zone
+      //   {
+      //     draw_positive_nvc(window_bar->x + window_parts_size, y_target, window_center_size_calculated, line_height);
+      //   }
+      // }
+      // else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
+      // ^ cannot be disabled anymore
       {
-        line_height = (height > line_size_scaled ? line_size_scaled : height); // (height - line_size_scaled)
-        // if border does not cover whole area, draw rest of the bar
-        if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
-        {
-          // draw uncovered area
-          if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT){
-            if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
-              float cut_size = aim_zone_size_calculated - window_parts_size;
-              if(aim_zone_on_right_side){
-                draw_positive_nvc(window_bar->x + window_parts_size, y_target + line_height, window_center_size_calculated - cut_size, height - line_height);
-              }
-              else
-              {
-                draw_positive_nvc(window_bar->x + window_parts_size + cut_size, y_target + line_height, window_center_size_calculated - cut_size, height - line_height);
-              }
-            } else if(aim_zone_size_calculated < window_parts_size){
-              // no cutting needed
-              draw_positive_nvc(window_bar->x + window_parts_size, y_target + line_height, window_center_size_calculated, height - line_height);
-            } // else whole center is cutted off
-          }
-          else // no subtraction of aim zone
-          {
-            draw_positive_nvc(window_bar->x + window_parts_size, y_target + line_height, window_center_size_calculated, height - line_height);
-          }
-        }
-        // draw border line
-        set_color_inc_pred(i_color);
-        if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT){
-          if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
-            float cut_size = aim_zone_size_calculated - window_parts_size;
-            if(aim_zone_on_right_side){
-              draw_positive_nvc(window_bar->x + window_parts_size, y_target, window_center_size_calculated - cut_size, line_height);
-            }
-            else
-            {
-              draw_positive_nvc(window_bar->x + window_parts_size + cut_size, y_target, window_center_size_calculated - cut_size, line_height);
-            }
-          } else if(aim_zone_size_calculated < window_parts_size){
-            // no cutting needed
-            draw_positive_nvc(window_bar->x + window_parts_size, y_target, window_center_size_calculated, line_height);
-          } // else whole center is cutted off
-        }
-        else // no subtraction of aim zone
-        {
-          draw_positive_nvc(window_bar->x + window_parts_size, y_target, window_center_size_calculated, line_height);
-        }
-      }
-      else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
         if(accel_aim_zone.integer & ACCEL_AIM_SUBTRACT){
           if(aim_zone_size_calculated > window_parts_size && aim_zone_size_calculated < window_parts_size + window_center_size_calculated){
             float cut_size = aim_zone_size_calculated - window_parts_size;
@@ -2065,13 +2231,13 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       }
 
       // would be easier to create actual or just helper bar and just pass it to the is_within_angle function
-      if(accel_aim_zone.integer & ACCEL_AIM_HL && window_bar->angle - (aim_zone_offset / resolution_ratio) * x_angle_ratio > center_angle && window_bar->angle - ((aim_zone_offset + aim_zone_size_calculated) / resolution_ratio) * x_angle_ratio < center_angle){
-        set_color_inc_pred(RGBA_I_AIM_ZONE_HL);
-        i_color = RGBA_I_BORDER_AIM_ZONE_HL;
+      if(accel_aim_zone.integer & ACCEL_AIM_HL && window_bar->angle - aim_zone_offset * resolution_ratio_inv * x_angle_ratio > center_angle && window_bar->angle - (aim_zone_offset + aim_zone_size_calculated) * resolution_ratio_inv * x_angle_ratio < center_angle){
+        set_color_inc_pred(RGBA_I_WINDOW_END_HL);
+        // i_color = RGBA_I_BORDER_AIM_ZONE_HL;
       }
       else{
-        set_color_inc_pred(RGBA_I_AIM_ZONE);
-        i_color = RGBA_I_BORDER_AIM_ZONE;
+        set_color_inc_pred(RGBA_I_WINDOW_END);
+        // i_color = RGBA_I_BORDER_AIM_ZONE;
       }
 
       const float x = window_bar->x + aim_zone_offset;
@@ -2083,42 +2249,44 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
       }
 
       if(accel_aim_zone_min_height.value > 0 && height < aim_zone_min_height_scaled){
-        height = aim_zone_min_height_scaled;
+        height = window_end_min_height_scaled;
       }
 
       float y_target;
       if(((accel_aim_zone.integer & ACCEL_AIM_VCENTER_FORCE) && (accel_aim_zone.integer & ACCEL_AIM_VCENTER))
         || (!(accel_aim_zone.integer & ACCEL_AIM_VCENTER_FORCE) && (accel.integer & ACCEL_VCENTER))
       ){
-        y_target = ypos_scaled - vcenter_offset_scaled - height / 2;
+        y_target = hud_ypos_scaled - vcenter_offset_scaled - height / 2;
       }
       else
       {
-        y_target = ypos_scaled - height;
+        y_target = hud_ypos_scaled - height;
       }
 
       if(accel_aim_zone_voffset.value > 0){
-        y_target -= aim_zone_voffset_scaled;
+        y_target -= window_end_voffset_scaled;
       }
 
-      // if(accel_aim_zone_height.value > 0){
-      //   draw_positive_nvc(x, ypos_scaled - aim_zone_height_scaled - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - aim_zone_height_scaled / 2 : 0), aim_zone_size_calculated, aim_zone_height_scaled);
+      // // if(accel_aim_zone_height.value > 0){
+      // //   draw_positive_nvc(x, ypos_scaled - aim_zone_height_scaled - (accel_aim_zone.integer & ACCEL_AIM_VCENTER ? vcenter_offset_scaled - aim_zone_height_scaled / 2 : 0), aim_zone_size_calculated, aim_zone_height_scaled);
+      // // }
+      // // else
+      // if(accel.integer & ACCEL_LINE_ACTIVE)
+      // {
+      //   line_height = (height > line_size_scaled ? line_size_scaled : height);
+      //   // if border does not cover whole area, draw rest of the bar
+      //   if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
+      //   {
+      //     // draw uncovered area
+      //     draw_positive_nvc(x, y_target + line_height, aim_zone_size_calculated, height - line_height);
+      //   }
+      //   // draw border line
+      //   set_color_inc_pred(i_color);
+      //   draw_positive_nvc(x, y_target, aim_zone_size_calculated, line_height);
       // }
-      // else
-      if(accel.integer & ACCEL_LINE_ACTIVE)
+      // else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
+      // ^ cannot be disabled anymore
       {
-        line_height = (height > line_size_scaled ? line_size_scaled : height);
-        // if border does not cover whole area, draw rest of the bar
-        if(height > line_height && !(accel.integer & ACCEL_DISABLE_BAR_AREA))
-        {
-          // draw uncovered area
-          draw_positive_nvc(x, y_target + line_height, aim_zone_size_calculated, height - line_height);
-        }
-        // draw border line
-        set_color_inc_pred(i_color);
-        draw_positive_nvc(x, y_target, aim_zone_size_calculated, line_height);
-      }
-      else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA)){
         draw_positive_nvc(x, y_target, aim_zone_size_calculated, height);
       }
     }
@@ -2164,7 +2332,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
         if((predict && bar->polarity > 0) || !predict){
           set_color_inc_pred(i_color);
-          draw_positive(bar->x, ypos_scaled, bar->width, zero_gap_scaled);
+          draw_positive(bar->x, ypos_scaled, bar->width, gap_scaled);
         }
       }
     }
@@ -2186,7 +2354,8 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
         // special handling for single positive bar ?
 
-        if(angle_short_radial_distance(vel_angle, yaw + bar->angle) < 0){
+        // potentially wrong (sign ?)
+        if(angle_short_radial_distance(vel_angle, yaw_angle + bar->angle_start) < 0){
           i_color = RGBA_I_EDGE_NEAR;
           right_i_color = RGBA_I_EDGE_FAR;
         }
@@ -2200,38 +2369,38 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
         if(accel_edge_height.value > 0){
           if(accel_edge.integer & ACCEL_EDGE_RELATIVE_HEIGHT){
-            if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
+            // if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
             {
               lh = bar->height * (accel_edge_height.value / 100);
               rh = bar_tmp->height * (accel_edge_height.value / 100);
             }
-            else if(accel.integer & ACCEL_LINE_ACTIVE)
-            {
-              lh = (bar->height > line_size_scaled ? line_size_scaled : bar->height) * (accel_edge_height.value / 100);
-              rh = (bar_tmp->height > line_size_scaled ? line_size_scaled : bar_tmp->height) * (accel_edge_height.value / 100);
-            }
+            // else if(accel.integer & ACCEL_LINE_ACTIVE)
+            // {
+            //   lh = (bar->height > line_size_scaled ? line_size_scaled : bar->height) * (accel_edge_height.value / 100);
+            //   rh = (bar_tmp->height > line_size_scaled ? line_size_scaled : bar_tmp->height) * (accel_edge_height.value / 100);
+            // }
           }
           else
           {
             rh = lh = edge_height_scaled;
           }
         }
-        else if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
+        else // if(!(accel.integer & ACCEL_DISABLE_BAR_AREA))
         {
           lh = bar->height;
           rh = bar_tmp->height;
         }
-        else if(accel.integer & ACCEL_LINE_ACTIVE)
-        {
-          lh = bar->height > line_size_scaled ? line_size_scaled : bar->height;
-          rh = bar_tmp->height > line_size_scaled ? line_size_scaled : bar_tmp->height;
-        }
-        else // no need to draw anything in the rest of the cases
-        {
-          // skip all positive we just handled
-          it = bar_tmp;
-          continue;
-        }
+        // else if(accel.integer & ACCEL_LINE_ACTIVE)
+        // {
+        //   lh = bar->height > line_size_scaled ? line_size_scaled : bar->height;
+        //   rh = bar_tmp->height > line_size_scaled ? line_size_scaled : bar_tmp->height;
+        // }
+        // else // no need to draw anything in the rest of the cases
+        // {
+        //   // skip all positive we just handled
+        //   it = bar_tmp;
+        //   continue;
+        // }
 
         // apply min height // before FULL_SIZE ? 
         if(accel_edge_min_height.value > 0){
@@ -2239,19 +2408,19 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           rh = rh < edge_min_height_scaled ? edge_min_height_scaled : rh;
         }
 
-        float ly = ypos_scaled - lh,
-              ry = ypos_scaled - rh;
+        float ly = hud_ypos_scaled - lh,
+              ry = hud_ypos_scaled - rh;
 
         if(accel_edge.integer & ACCEL_EDGE_FULL_SIZE){
-          lh = lh * 2 + zero_gap_scaled; 
-          rh = rh * 2 + zero_gap_scaled;
+          lh = lh * 2 + gap_scaled; 
+          rh = rh * 2 + gap_scaled;
         }
 
         if(((accel_edge.integer & ACCEL_EDGE_VCENTER_FORCE) && (accel_edge.integer & ACCEL_EDGE_VCENTER))
           || (!(accel_edge.integer & ACCEL_EDGE_VCENTER_FORCE) && (accel.integer & ACCEL_VCENTER))
         ){
-          ly = ypos_scaled - vcenter_offset_scaled - lh / 2;
-          ry = ypos_scaled - vcenter_offset_scaled - rh / 2;
+          ly = hud_ypos_scaled - vcenter_offset_scaled - lh / 2;
+          ry = hud_ypos_scaled - vcenter_offset_scaled - rh / 2;
         }
 
         float lw = edge_size_scaled,
@@ -2279,11 +2448,11 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
         }
 
         // left
-        trap_R_SetColor(a.graph_rgba[i_color]);
+        trap_R_SetColor(game.graph_rgba[i_color]);
         draw_positive_nvc(lx, ly, lw, lh);
 
         // right
-        trap_R_SetColor(a.graph_rgba[right_i_color]);
+        trap_R_SetColor(game.graph_rgba[right_i_color]);
         draw_positive_nvc(rx, ry, rw, rh);
 
         // skip all positive we just handled
@@ -2296,7 +2465,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     {
       set_color_inc_pred(RGBA_I_POINT);
 
-      y = ypos_scaled + hud_height_scaled * (center_bar->value / normalizer) * -1;
+      y = hud_ypos_scaled + hud_height_scaled * (center_bar->value / normalizer) * -1;
       if(center_bar->value > 0){
         draw_positive(center - (accel_point_line_size.value * cgs.screenXScale) / 2, y, accel_point_line_size.value * cgs.screenXScale, ypos_scaled - y);
       }
@@ -2311,7 +2480,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
 static void PM_SlickAccelerate(const vec3_t wishdir, float const wishspeed, float const accel_)
 {
-  PM_Accelerate(wishdir, wishspeed, accel_);
+  PM_Accelerate(wishdir, wishspeed, accel_, MOVE_WALK_SLICK);
 }
 
 
@@ -2334,13 +2503,13 @@ static void PM_AirMove( void ) {
     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
 
   // project moves down to flat plane
-  a.pml.forward[2] = 0;
-  a.pml.right[2] = 0;
-  VectorNormalize (a.pml.forward);
-  VectorNormalize (a.pml.right);
+  game.pml.forward[2] = 0;
+  game.pml.right[2] = 0;
+  VectorNormalize (game.pml.forward);
+  VectorNormalize (game.pml.right);
 
   for ( i = 0 ; i < 2 ; i++ ) {
-      wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove;
+      wishvel[i] = game.pml.forward[i]*game.pm.cmd.forwardmove + game.pml.right[i]*game.pm.cmd.rightmove;
   }
   wishvel[2] = 0;
 
@@ -2349,19 +2518,18 @@ static void PM_AirMove( void ) {
   wishspeed *= scale;
 
   // not on ground, so little effect on velocity
-  if (a.pm_ps.pm_flags & PMF_PROMODE && accel_trueness.integer & ACCEL_TN_CPM) //  && (!pms.pm.cmd.forwardmove && pms.pm.cmd.rightmove) => there is also forward move
+  if (game.pm_ps.pm_flags & PMF_PROMODE && accel_trueness.integer & ACCEL_TN_CPM) //  && (!pms.pm.cmd.forwardmove && pms.pm.cmd.rightmove) => there is also forward move
   {
-    move_type = MOVE_AIR_CPM;
     PM_Accelerate(wishdir,
-        (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove && wishspeed > cpm_airwishspeed ?
+        (!game.pm.cmd.forwardmove && game.pm.cmd.rightmove && wishspeed > cpm_airwishspeed ?
         cpm_airwishspeed : wishspeed),
-        (!a.pm.cmd.forwardmove && a.pm.cmd.rightmove ? cpm_airstrafeaccelerate :
-        (DotProduct(a.pm_ps.velocity, wishdir) < 0 ? 2.5f : pm_airaccelerate)));
+        (!game.pm.cmd.forwardmove && game.pm.cmd.rightmove ? cpm_airstrafeaccelerate :
+        (DotProduct(game.pm_ps.velocity, wishdir) < 0 ? 2.5f : pm_airaccelerate)),
+      MOVE_AIR_CPM);
   }
   else
   {
-    move_type = MOVE_AIR;
-    PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
+    PM_Accelerate(wishdir, wishspeed, pm_airaccelerate, MOVE_AIR);
   }
 }
 
@@ -2379,15 +2547,15 @@ static void PM_WalkMove( void ) {
   float		wishspeed;
   float		scale;
 
-  if ( a.pm.waterlevel > 2 && DotProduct( a.pml.forward, a.pml.groundTrace.plane.normal ) > 0 ) {
+  if ( game.pm.waterlevel > 2 && DotProduct( game.pml.forward, game.pml.groundTrace.plane.normal ) > 0 ) {
     // begin swimming
     // PAL_WaterMove();
     return;
   }
 
-  if (PM_CheckJump(&a.pm, &a.pm_ps, &a.pml)) {
+  if (PM_CheckJump(&game.pm, &game.pm_ps, &game.pml)) {
     // jumped away
-    if ( a.pm.waterlevel > 1 ) {
+    if ( game.pm.waterlevel > 1 ) {
         //PAL_WaterMove();
     } else {
         PM_AirMove();
@@ -2400,18 +2568,18 @@ static void PM_WalkMove( void ) {
   PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
 
   // project moves down to flat plane
-  a.pml.forward[2] = 0;
-  a.pml.right[2] = 0;
+  game.pml.forward[2] = 0;
+  game.pml.right[2] = 0;
 
   // project the forward and right directions onto the ground plane
-  PM_ClipVelocity (a.pml.forward, a.pml.groundTrace.plane.normal, a.pml.forward, OVERCLIP );
-  PM_ClipVelocity (a.pml.right, a.pml.groundTrace.plane.normal, a.pml.right, OVERCLIP );
+  PM_ClipVelocity (game.pml.forward, game.pml.groundTrace.plane.normal, game.pml.forward, OVERCLIP );
+  PM_ClipVelocity (game.pml.right, game.pml.groundTrace.plane.normal, game.pml.right, OVERCLIP );
   //
-  VectorNormalize (a.pml.forward); // aprox. 1 unit in space facing forward based on cameraview
-  VectorNormalize (a.pml.right); // aprox. 1 unit in space facing right based on cameraview
+  VectorNormalize (game.pml.forward); // aprox. 1 unit in space facing forward based on cameraview
+  VectorNormalize (game.pml.right); // aprox. 1 unit in space facing right based on cameraview
 
   for ( i = 0 ; i < 2 ; i++ ) {
-    wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove; // added fractions of direction (the camera once) increased over move (127 run speed)
+    wishvel[i] = game.pml.forward[i]*game.pm.cmd.forwardmove + game.pml.right[i]*game.pm.cmd.rightmove; // added fractions of direction (the camera once) increased over move (127 run speed)
   }
   // when going up or down slopes the wish velocity should Not be zero // but its value doesnt come from anywhere here so wtf...
   wishvel[2] = 0;
@@ -2421,48 +2589,46 @@ static void PM_WalkMove( void ) {
   wishspeed *= scale;
 
   // clamp the speed lower if ducking
-  if ( a.pm_ps.pm_flags & PMF_DUCKED ) {
-    if ( wishspeed > a.pm_ps.speed * pm_duckScale ) {
-      wishspeed = a.pm_ps.speed * pm_duckScale;
+  if ( game.pm_ps.pm_flags & PMF_DUCKED ) {
+    if ( wishspeed > game.pm_ps.speed * pm_duckScale ) {
+      wishspeed = game.pm_ps.speed * pm_duckScale;
     }
   }
 
   // clamp the speed lower if wading or walking on the bottom
-  if(a.pm.waterlevel)
+  if(game.pm.waterlevel)
   {
-    float	waterScale = a.pm.waterlevel / 3.0f;
-    if(a.pm_ps.pm_flags & PMF_PROMODE)
+    float	waterScale = game.pm.waterlevel / 3.0f;
+    if(game.pm_ps.pm_flags & PMF_PROMODE)
     {
-      waterScale = 1.0 - (1.0 - (a.pm.waterlevel == 1 ? 0.585 : 0.54)) * waterScale;
+      waterScale = 1.0 - (1.0 - (game.pm.waterlevel == 1 ? 0.585 : 0.54)) * waterScale;
     }
     else {
       waterScale = 1.0f - ( 1.0f - pm_swimScale ) * waterScale;
     }
 
-    if ( wishspeed > a.pm_ps.speed * waterScale ) {
-      wishspeed = a.pm_ps.speed * waterScale;
+    if ( wishspeed > game.pm_ps.speed * waterScale ) {
+      wishspeed = game.pm_ps.speed * waterScale;
     }
   }
 
   // when a player gets hit, they temporarily lose
   // full control, which allows them to be moved a bit
-  move_type = MOVE_WALK;
   if (accel_trueness.integer & ACCEL_TN_GROUND)
   {
-    if (a.pml.groundTrace.surfaceFlags & SURF_SLICK || a.pm_ps.pm_flags & PMF_TIME_KNOCKBACK)
+    if (game.pml.groundTrace.surfaceFlags & SURF_SLICK || game.pm_ps.pm_flags & PMF_TIME_KNOCKBACK)
     {
-      move_type = MOVE_WALK_SLICK;
-      PM_SlickAccelerate(wishdir, wishspeed, a.pm_ps.pm_flags & PMF_PROMODE ? cpm_slickaccelerate : pm_slickaccelerate);
+      PM_SlickAccelerate(wishdir, wishspeed, game.pm_ps.pm_flags & PMF_PROMODE ? cpm_slickaccelerate : pm_slickaccelerate);
     }
     else
     {
       // don't reset the z velocity for slopes
       // a.pm_ps.velocity[2] = 0;
-      PM_Accelerate(wishdir, wishspeed, a.pm_ps.pm_flags & PMF_PROMODE ? cpm_accelerate : pm_accelerate);
+      PM_Accelerate(wishdir, wishspeed, game.pm_ps.pm_flags & PMF_PROMODE ? cpm_accelerate : pm_accelerate, MOVE_WALK);
     }
   }
   else
   {
-    PM_Accelerate(wishdir, wishspeed, pm_airaccelerate);
+    PM_Accelerate(wishdir, wishspeed, pm_airaccelerate, MOVE_WALK);
   }
 }
