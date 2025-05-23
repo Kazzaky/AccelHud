@@ -9,7 +9,6 @@
  // TODO: refactor aim zone substitution
 
 #include <float.h>
-#include <initializer_list>
 #include <math.h>
 #include <stdlib.h>
 
@@ -154,33 +153,48 @@ typedef struct
   playerState_t pm_ps;
   pml_t         pml;
 
-  int8_t        move_scale; // full cmd walk or run (64/127)
+  int8_t        move_scale; // full cmd walk or run (64 or 127)
 } game_t;
 
 static game_t game;
 
-typedef struct graph_bar_ {
-  float x; // scaled x 
-  float y; // scaled y
-  float height; // scaled height (real pixels, not absolute -> not always positive)
-  float width; // scaled width (real pixels)
-  float value; // raw delta speed (combined)
-  float value_side; // raw delta speed (side only) // TODO
-  int   polarity; // 1 = positive, 0 = zero, -1 = negative
+typedef struct
+{
+  float total; // redundant, but convenience (and ops)
+  float forward;
+  float side;
+  float up;
+} speed_delta_t;
+
+inline static int speed_delta_eq(speed_delta_t const *a, speed_delta_t const *b){
+  return a->forward == b->forward && a->side == b->side && a->up == b->up; // a->total == b->total is redundant
+}
+
+
+typedef struct graph_bar_
+{
+  int               ix; // x in max pixels
+  int               iwidth; // width in max pixels
+  speed_delta_t     speed_delta; 
+  int               polarity; // 1 = positive, 0 = zero, -1 = negative
   // ^ could be determined by LTZ or GTZ from value but this is tradeoff memory vs ops
-  float angle_start; // yaw relative (left < 0, right > 0)
-  float angle_end; // yaw relative (left < 0, right > 0)
+  float             angle_start; // yaw relative (left < 0, right > 0)
+  float             angle_end; // yaw relative (left < 0, right > 0)
+
+  // bidirectional linked list
   struct graph_bar_ *next;
   struct graph_bar_ *prev;
-  // not the most elegant solution, but we got rid of ordering
-  int next_is_adj;
-  int prev_is_adj;
+
+  // not the most elegant solution, but we got rid of ordering yay ! 
+  int               next_is_adj;
+  int               prev_is_adj;
 } graph_bar;
 
 #define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded \
 // ^ technically there is no real limitation besides memory block allocation
 
-typedef struct {
+typedef struct
+{
   vec2_t    yh; // y pos, height (not scaled)
   vec4_t    colors[COLOR_ID_LENGTH];
 
@@ -235,19 +249,16 @@ typedef struct {
 static accel_t a;
 
 // used for optimization
+// its unfortunate to use struct like this
+// but we need to be able to react to changes
+// (wait, maybe screen_width is guaranteed to be the same, due to vid_restart need)
 typedef struct
 {
-  // static
   float half_fov_x;
   float half_fov_x_tan_inv;
   float quarter_fov_x;
   float quarter_fov_x_tan_inv;
   float half_screen_width;
-
-  // dynamic
-  float angle;
-  float proj_x;
-  float proj_w;
 } projection_data_t;
 
 static projection_data_t projection_data;
@@ -309,6 +320,7 @@ static void a_init(void)
 static void update_static(void)
 {
   int x_angle_ratio_recalc = 0;
+
   // precheck
   if(a.last_fov_x != cg.refdef.fov_x || a.last_vid_width != cgs.glconfig.vidWidth){
     x_angle_ratio_recalc = 1;
@@ -572,13 +584,15 @@ static void (*vertical_center)(float*, float) = _vertical_center_noop;
 // this is expensive, isn't there any better way ? like alternative to trap_R_DrawStretchPic which handle that ?
 static void _add_projection_x_0(float *x, float *w)
 {
-  projection_data.angle = (*x / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
-  projection_data.proj_x = projection_data.half_screen_width * (1 + tanf(projection_data.angle) * projection_data.half_fov_x_tan_inv);
-  projection_data.angle = ((*x + *w) / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
-  projection_data.proj_w = (projection_data.half_screen_width * (1 + tanf(projection_data.angle) * projection_data.half_fov_x_tan_inv)) - projection_data.proj_x;
+  float angle, proj_x, proj_w;
+
+  angle = (*x / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
+  proj_x = projection_data.half_screen_width * (1 + tanf(angle) * projection_data.half_fov_x_tan_inv);
+  angle = ((*x + *w) / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
+  proj_w = (projection_data.half_screen_width * (1 + tanf(angle) * projection_data.half_fov_x_tan_inv)) - proj_x;
    
-  *x = projection_data.proj_x;
-  *w = projection_data.proj_w;
+  *x = proj_x;
+  *w = proj_w;
 }
 
 static void _add_projection_x_1(float *x, float *w)
@@ -590,13 +604,15 @@ static void _add_projection_x_1(float *x, float *w)
 // this is expensive, isn't there any better way ? like alternative to trap_R_DrawStretchPic which handle that ?
 static void _add_projection_x_2(float *x, float *w)
 {
-  projection_data.angle = (*x / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
-  projection_data.proj_x = projection_data.half_screen_width * (1 + tanf(projection_data.angle / 2) * projection_data.quarter_fov_x_tan_inv);
-  projection_data.angle = ((*x + *w) / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
-  projection_data.proj_w = (projection_data.half_screen_width * (1 + tanf(projection_data.angle / 2) * projection_data.quarter_fov_x_tan_inv)) - projection_data.proj_x;
+  float angle, proj_x, proj_w;
 
-  *x = projection_data.proj_x;
-  *w = projection_data.proj_w;
+  angle = (*x / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
+  proj_x = projection_data.half_screen_width * (1 + tanf(angle / 2) * projection_data.quarter_fov_x_tan_inv);
+  angle = ((*x + *w) / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
+  proj_w = (projection_data.half_screen_width * (1 + tanf(angle / 2) * projection_data.quarter_fov_x_tan_inv)) - proj_x;
+
+  *x = proj_x;
+  *w = proj_w;
 }
 
 static void (*add_projection_x)(float*, float*) = _add_projection_x_1;
@@ -607,9 +623,8 @@ void (*draw_positive_window_end)(float x, float y, float w, float h) = draw_posi
 
 // **** special tracking cvars callbacks ****
 
-static TRACK_CALLBACK(accel){
-  // parse binary format
-  // vmCvar.integer is actually only atoi, so in order to support format like 0b01 we need to call parser
+static TRACK_CALLBACK(accel)
+{
   item->vmCvar->integer = cvar_getInteger(item->name);
 
   // update all related function pointers
@@ -637,13 +652,12 @@ static TRACK_CALLBACK(mdd_projection)
   }
 }
 
-static TRACK_CALLBACK(accel_edge){
-  // parse binary format
-  // vmCvar.integer is actually only atoi, so in order to support format like 0b01 we need to call parser
+static TRACK_CALLBACK(accel_edge)
+{
   item->vmCvar->integer = cvar_getInteger(item->name);
 
   // update all related function pointers
-  if(item->vmCvar->integer & ACCEL_VCENTER){
+  if(item->vmCvar->integer & ACCEL_VCENTER){ // <- TODO
     // enable vertical centering
     draw_positive_edge = draw_positive;
   } else {
@@ -652,13 +666,12 @@ static TRACK_CALLBACK(accel_edge){
   }
 }
 
-static TRACK_CALLBACK(accel_window_end){
-  // parse binary format
-  // vmCvar.integer is actually only atoi, so in order to support format like 0b01 we need to call parser
+static TRACK_CALLBACK(accel_window_end)
+{
   item->vmCvar->integer = cvar_getInteger(item->name);
 
   // update all related function pointers
-  if(item->vmCvar->integer & ACCEL_VCENTER){
+  if(item->vmCvar->integer & ACCEL_VCENTER){ // <- TODO
     // enable vertical centering
     draw_positive_window_end = draw_positive;
   } else {
@@ -667,12 +680,12 @@ static TRACK_CALLBACK(accel_window_end){
   }
 }
 
-static void PmoveSingle(void);
-static void PmoveSingle_update(void);
-static void PM_AirMove(void);
-static void PM_WalkMove(void);
-static void PM_WalkMove_predict(int predict, int window);
-static void PM_AirMove_predict(int predict, int window);
+inline static void PmoveSingle(void);
+inline static void PmoveSingle_update(void);
+inline static void PM_AirMove(void);
+inline static void PM_WalkMove(void);
+inline static void PM_WalkMove_predict(int predict, int window);
+inline static void PM_AirMove_predict(int predict, int window);
 
 
 // **** primary hud functions ****
@@ -747,7 +760,7 @@ inline static void move_predict(int predict, int window)
   }
 }
 
-static void PmoveSingle_update(void)
+inline static void PmoveSingle_update(void)
 {
   // scale is full move, the cmd moves could be partials,
   // particals cause flickering -> p_flickfree force full moves
@@ -816,7 +829,7 @@ static void PmoveSingle_update(void)
   a.yaw_angle = DEG2RAD(game.pm_ps.viewangles[YAW]);
 }
 
-static void PmoveSingle(void)
+inline static void PmoveSingle(void)
 {
   if(a.draw_block){
     return;
@@ -1247,7 +1260,7 @@ Handles both ground friction and water friction
 ==================
 */
 // TODO: Write assert to assume 0 <= cT <= 1 // what does cT means ?
-static void PM_Friction(vec3_t velocity_io)
+inline static void PM_Friction(vec3_t velocity_io)
 {
   // ignore slope movement
   float const speed = game.pml.walking ? VectorLength2(velocity_io) : VectorLength(velocity_io);
@@ -1301,32 +1314,32 @@ static void PM_Friction(vec3_t velocity_io)
 
 
 // following function is modified version of function taken from: https://github.com/ETrun/ETrun/blob/43b9e18b8b367b2c864bcfa210415372820dd212/src/game/bg_pmove.c#L839
-static void PM_Aircontrol(const vec3_t wishdir, vec3_t velocity_io) {
-	float zspeed, speed, dot, k;
-	int   i;
+inline static void PM_Aircontrol(const vec3_t wishdir, vec3_t velocity_io) {
+  float zspeed, speed, dot, k;
+  int   i;
 
-	// if (!pms.pm.cmd.rightmove || wishspeed == 0.0) {
-	// 	return; 
-	// }
+  // if (!pms.pm.cmd.rightmove || wishspeed == 0.0) {
+  // 	return; 
+  // }
 
-	zspeed              = velocity_io[2];
-	velocity_io[2] = 0;
-	speed               = VectorNormalize(velocity_io);
+  zspeed = velocity_io[2];
+  velocity_io[2] = 0;
+  speed = VectorNormalize(velocity_io);
 
-	dot = DotProduct(velocity_io, wishdir);
-	k   = 32.0f * 150.0f * dot * dot * pm_frametime;
+  dot = DotProduct(velocity_io, wishdir);
+  k = 32.0f * 150.0f * dot * dot * pm_frametime;
 
-	if (dot > 0) {
-		for (i = 0; i < 2; ++i) {
-			velocity_io[i] = velocity_io[i] * speed + wishdir[i] * k;
-		}
-		VectorNormalize(velocity_io);
-	}
+  if (dot > 0) {
+    for (i = 0; i < 2; ++i) {
+      velocity_io[i] = velocity_io[i] * speed + wishdir[i] * k;
+    }
+    VectorNormalize(velocity_io);
+  }
 
-	for (i = 0; i < 2; ++i) {
-		velocity_io[i] *= speed;
-	}
-	velocity_io[2] = zspeed;
+  for (i = 0; i < 2; ++i) {
+    velocity_io[i] *= speed;
+  }
+  velocity_io[2] = zspeed;
 }
 
 
@@ -1357,16 +1370,18 @@ inline static void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float 
     }
 }
 
+static const vec3_t vec_up = {0.f, 0.f, 1.f};
 
-// the function to calculate delta
-// does not modify a.pm_ps.velocity (not sure anymore since its edited to be used in old version)
-inline static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_, int move_type, int verbose){
-  int			i;
-  float		addspeed, accelspeed, currentspeed;//, delta;
+// the function to calculate speed delta
+// does not modify a.pm_ps.velocity
+inline static speed_delta_t calc_speed_delta_walk(const vec3_t wishdir, float const wishspeed, float const accel_)
+{
+  int     i;
+  float   addspeed, accelspeed, forwardspeed;
   vec3_t  velpredict;
-  vec3_t velocity;
+  vec3_t  velocity;
 
-  (void)verbose;
+  speed_delta_t result = {0};
   
   VectorCopy(game.pm_ps.velocity, velocity);
 
@@ -1374,15 +1389,15 @@ inline static float calc_accelspeed(const vec3_t wishdir, float const wishspeed,
 
   PM_Friction(velocity);
 
-  currentspeed = DotProduct (velocity, wishdir); // the velocity speed part regardless the wish direction
+  forwardspeed = DotProduct(velocity, wishdir); // forward based on wishdir
 
-  addspeed = wishspeed - currentspeed;
+  addspeed = wishspeed - forwardspeed; // maximum
 
   if (addspeed <= 0) {
-    return 0;
+    return result;
   }
 
-  accelspeed = accel_*pm_frametime*wishspeed; // fixed pmove
+  accelspeed = accel_ * pm_frametime * wishspeed; // fixed pmove
   if (accelspeed > addspeed) {
       accelspeed = addspeed;
   }
@@ -1390,33 +1405,83 @@ inline static float calc_accelspeed(const vec3_t wishdir, float const wishspeed,
   VectorCopy(velocity, velpredict);
     
   for (i=0 ; i<3 ; i++) {
-    velpredict[i] += accelspeed*wishdir[i];
+    velpredict[i] += accelspeed * wishdir[i];
+  }
+
+  // clipping
+  float speed = VectorLength(velpredict);
+
+  PM_ClipVelocity(velpredict, game.pml.groundTrace.plane.normal,
+      velpredict, OVERCLIP );
+      
+  VectorNormalize(velpredict);
+  VectorScale(velpredict, speed, velpredict);
+ 
+  // add snapping to predict velocity vector
+  Sys_SnapVector(velpredict);
+
+  result.total = VectorLength(velpredict) - VectorLength(velocity);
+  result.forward = DotProduct(velpredict, wishdir) - forwardspeed;
+  result.up = DotProduct(velpredict, vec_up) - DotProduct(velocity, vec_up);
+  result.side = result.total - result.forward - result.up;
+
+  return result;
+}
+
+// the function to calculate speed delta
+// does not modify a.pm_ps.velocity
+inline static speed_delta_t calc_speed_delta_air(const vec3_t wishdir, float const wishspeed, float const accel_)
+{
+  int     i;
+  float   addspeed, accelspeed, forwardspeed;
+  vec3_t  velpredict;
+  vec3_t  velocity;
+
+  speed_delta_t result = {0};
+  
+  VectorCopy(game.pm_ps.velocity, velocity);
+
+  Sys_SnapVector(velocity); // solves bug in spectator mode
+
+  PM_Friction(velocity);
+
+  forwardspeed = DotProduct(velocity, wishdir); // forward based on wishdir
+
+  addspeed = wishspeed - forwardspeed; // maximum
+
+  if (addspeed <= 0) {
+    return result;
+  }
+
+  accelspeed = accel_ * pm_frametime * wishspeed; // fixed pmove
+  if (accelspeed > addspeed) {
+      accelspeed = addspeed;
+  }
+
+  VectorCopy(velocity, velpredict);
+    
+  for (i=0 ; i<3 ; i++) {
+    velpredict[i] += accelspeed * wishdir[i];
   }
 
   // add aircontrol to predict velocity vector
-  if(move_type == MOVE_AIR_CPM && wishspeed && !game.pm.cmd.forwardmove && game.pm.cmd.rightmove) PM_Aircontrol(wishdir, velpredict);
+  if(wishspeed && !game.pm.cmd.forwardmove && game.pm.cmd.rightmove) PM_Aircontrol(wishdir, velpredict);
 
   // clipping
-  if((move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK))
-  {
-    float speed = VectorLength(velpredict);
-
-    PM_ClipVelocity(velpredict, game.pml.groundTrace.plane.normal,
-        velpredict, OVERCLIP );
-        
-    VectorNormalize(velpredict);
-    VectorScale(velpredict, speed, velpredict);
-  }
-  else if((move_type == MOVE_AIR || move_type == MOVE_AIR_CPM)
-      && game.pml.groundPlane)
+  if(game.pml.groundPlane)
   {
     PM_ClipVelocity(velpredict, game.pml.groundTrace.plane.normal, velpredict, OVERCLIP );
   }
 
   // add snapping to predict velocity vector
   Sys_SnapVector(velpredict);
-  
-  return VectorLength(velpredict) - VectorLength(velocity);
+
+  result.total = VectorLength(velpredict) - VectorLength(velocity);
+  result.forward = DotProduct(velpredict, wishdir) - forwardspeed;
+  result.up = DotProduct(velpredict, vec_up) - DotProduct(velocity, vec_up); // yea while grounded there is up portion !
+  result.side = result.total - result.forward - result.up;
+
+  return result;
 }
 
 inline static void rotate_point_by_angle_cw(vec_t vec[2], float rad){
@@ -1434,6 +1499,7 @@ inline static int is_angle_within_bar(graph_bar *bar, float angle)
   return bar->angle_start < angle && bar->angle_end > angle;
 }
 
+
 /*
 ==============
 PM_Accelerate
@@ -1441,39 +1507,45 @@ PM_Accelerate
 Handles user intended acceleration
 ==============
 */
-static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_, int move_type)
+inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_, int move_type, int predict) // TODO: remove move_type and predict -> split this function into versions
 {
-  // these are allocated over and over again, we could save some cpu time by moving these to static 
-  int i, /*j,*/ i_color, /*negative_draw_skip,*/ color_alternate_origin = 0;
-  float y, /*dist_to_zero, dist_to_adj,*/ height, /*line_height,*/ speed_delta, center_angle = 0, angle_yaw_relative, normalizer, yaw_min_distance, yaw_distance;
+  int i, i_color;
+  float y, height, center_angle, angle_yaw_relative, normalizer, yaw_min_distance, yaw_distance, norm_speed;
+  speed_delta_t speed_delta;
   vec3_t wishdir_rotated;
-  graph_bar *bar, /**bar_adj,*/ *bar_tmp, *window_bar = NULL, *center_bar = NULL;
-  graph_bar *it, *start, *end, *start_origin, *end_origin; // end is included in loop
-  int omit = 0;
+  graph_bar *bar, *bar_tmp, *window_bar, *center_bar;
+  graph_bar *it, *start, *start_origin, *end_origin;
+  graph_bar *end; // end is included in loop (last valid element)
+  int omit;
+
+   center_angle = 0;
+   window_bar = NULL;
+   center_bar = NULL;
+   omit = 0;
 
   
   // theoretical maximum is: addspeed * sin(45) * 2, but in practice its way less
   // hardcoded for now
   // inacurate approximation
-  float norm_speed = VectorLength2(game.pm_ps.velocity);
-  // dynamic normalizer breaks at 7000ups (value goes negative at this point), since this is a approximation, we can't make it bullet proof, hence this hotfix:
-  if(norm_speed > 6000){
-    norm_speed = 6000;
+   norm_speed = a.velocity;
+  // dynamic normalizer breaks at 7000ups (value goes negative at this point), since this is an approximation, we can't make it bullet proof, hence this hotfix:
+  if( norm_speed > 6000){
+     norm_speed = 6000;
   }
   // there is side effect of the approximation and that is changing height profile based on speed, which falsefully give impression that accel is actually higher while it isn't
   // the trueness static boost for those who want real (accurate) height
-  normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -1*0.00025f*norm_speed+1.75f);
+   normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -0.00025f * norm_speed + 1.75f);
   if(move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK){
-    normalizer *= 15.f;// 38.4f * 1.41421356237f;
+     normalizer *= 15.f;// 38.4f * 1.41421356237f;
   }
 
   // recalculate the graph
   a.graph_size = 0;
-  // cur_speed_delta = 1000.f; // just reset to nonsence value // not needed it imo
+
   // for each horizontal pixel
   for(i = 0; i < a.resolution; ++i)
   {
-    angle_yaw_relative = (i - (a.resolution / 2.f)) * a.x_angle_ratio;
+    angle_yaw_relative = (i - (a.resolution / 2.f)) * a.x_angle_ratio; // (left < 0, right > 0)
 
     if(i == a.center){
       // the current (where the cursor points to)
@@ -1488,100 +1560,120 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
     if (move_type == MOVE_AIR_CPM && (!game.pm.cmd.rightmove || game.pm.cmd.forwardmove))
     {
       if(DotProduct(game.pm_ps.velocity, wishdir_rotated) < 0){
-        speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, 2.5f, move_type, 0);
+        speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, 2.5f); // cpm extra zone
       }else{
-        speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, pm_airaccelerate, move_type, 0);
+        speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, pm_airaccelerate);
       }
     }
     else
     {
-      speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, accel_, move_type, 0);
+      if(move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK){
+        speed_delta = calc_speed_delta_walk(wishdir_rotated, wishspeed, accel_);
+      }else{
+        speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, accel_);
+      }
     }
 
     if(
       // automatically omit negative accel when plotting predictions, also when negatives are disabled ofc
-      speed_delta <= 0 && (predict || accel_neg_mode.value == 0)
+      speed_delta.total <= 0 // there are overall more negative bars, but negative bars are usually disabled
+      && (predict || accel_neg_mode.value == 0)
     ){
-      //order++; // just control variable to distinct between adjecent bars (i hate it !)
       omit = 1;
       continue;
     }
 
-    // grow the previous bar width when same speed_delta or within threshold
-    if(accel_graph_size
-      && accel_graph[accel_graph_size-1].value == speed_delta
-      && accel_graph[accel_graph_size-1].order == order - 1 // since we are omitting sometimes this check is mandatory
+    // grow the previous bar width when same speed_delta
+    if(
+        __builtin_expect(a.graph_size && speed_delta_eq(&a.graph[a.graph_size-1].speed_delta, &speed_delta), 1)
+        && !omit 
     ){
-      graph[graph_size-1].width += resolution_ratio;
-      graph[graph_size-1].angle_end = angle_yaw_relative;
+      a.graph[a.graph_size-1].iwidth += 1;
+      a.graph[a.graph_size-1].angle_end = angle_yaw_relative;
     }
     else{
-      bar = &(graph[graph_size]);
-      bar->x = i * resolution_ratio;
-      bar->polarity = speed_delta ? (speed_delta > 0 ? 1 : -1) : 0;
-      bar->height = hud_height_scaled * (accel.integer & ACCEL_UNIFORM_VALUE ? bar->polarity : speed_delta / normalizer);
-      if(accel_base_height.value > 0){
-        bar->height += base_height_scaled * (bar->height > 0 ? 1 : -1); 
-      }
-      if(fabsf(bar->height) > max_height_scaled){
-        bar->height = max_height_scaled * (bar->height > 0 ? 1 : -1);
-      }
-      bar->y = hud_ypos_scaled + bar->height * -1; // * -1 because of y axis orientation
-      bar->width = resolution_ratio;
-      bar->value = speed_delta;
-      bar->order = order++;
-      bar->next = NULL;
-      bar->angle_start = angle_yaw_relative; // (left < 0, right > 0)
-      bar->angle_end = angle_yaw_relative; // (left < 0, right > 0)
-      if(__builtin_expect(graph_size, 1)){
-        bar->prev = &(graph[graph_size-1]);
-        graph[graph_size-1].next = bar;
-      }else{
-        bar->prev = NULL;
+      bar = &(a.graph[a.graph_size]);
+      bar->ix = i; // * a.resolution_ratio;
+      bar->polarity = (speed_delta.total > 0) - (speed_delta.total < 0);
+      // bar->height = a.hud_height_scaled * (accel.integer & ACCEL_UNIFORM_VALUE ? bar->polarity : speed_delta.total / normalizer);
+      // if(accel_base_height.value > 0){
+      //   bar->height += a.base_height_scaled * (bar->height > 0 ? 1 : -1); 
+      // }
+      // if(fabsf(bar->height) > a.max_height_scaled){
+      //   bar->height = a.max_height_scaled * (bar->height > 0 ? 1 : -1);
+      // }
+      //bar->y = a.hud_ypos_scaled + bar->height * -1; // * -1 because of y axis orientation
+      bar->iwidth = 1; // a.resolution_ratio;
+      bar->speed_delta = speed_delta;
+      bar->angle_start = angle_yaw_relative;
+      bar->angle_end = angle_yaw_relative; // when they are same this is single-pixel-wide bar
+      if(__builtin_expect(a.graph_size, 1)){
+        // set prev and next
+        bar->prev = &(a.graph[a.graph_size-1]);
+        bar->prev->next = bar;
+
+        // when we create new bar while previous exist 
+        // we can determine adjecent
+        // if we didn't omited between these two -> they are adjecent
+        bar->prev->next_is_adj = !omit;
+        bar->prev_is_adj = !omit;
       }
 
+      // we just created new bar -> reset the omit state
       omit = 0;
-
-      ++graph_size;
+      ++a.graph_size;
     }
   }
 
-  if(!graph_size) return;
+  if(__builtin_expect(!a.graph_size, 0)) return;
 
   // default
-  start = &(graph[0]);
-  end = &(graph[graph_size-1]);
+  start = &(a.graph[0]);
+  end = &(a.graph[a.graph_size-1]);
 
-  // merge bars (not pretty at all)
-  if(accel_merge_threshold.value && graph_size >= 2)
+  // reset edge cases (because no init and array reuse)
+  // better to do it here then while creating to save ops
+  start->prev = NULL;
+  start->prev_is_adj = 0;
+  end->next = NULL;
+  end->next_is_adj = 0;
+
+  // merge bars
+  if(a.graph_size >= 2 && accel_merge_threshold.value)
   {
     int use_prev = 0;
-    for(i = 0; i < graph_size; ++i){
-      bar = &(graph[i]);
-      if(bar->width <= accel_merge_threshold.value){
+    for(i = 0; i < a.graph_size; ++i){
+      bar = &(a.graph[i]);
+      if(__builtin_expect(bar->iwidth <= accel_merge_threshold.value, 0)){
         // left most edge case
-        if(bar->next && !bar->prev){
-          bar->next->width += bar->width;
-          bar->next->x = bar->x;
+        // can't move this before loop, these could be rolling
+        // can't predict branch either (micro bars are usually edge case)
+        if(bar->next && !bar->prev){ 
+          bar->next->iwidth += bar->iwidth;
+          bar->next->ix = bar->ix;
           start = bar->next;
           start->prev = NULL; // remove the edge bars
         }
         // right most edge case
+        // can't move this before loop, we might recreate this case regardless
+        // can't predict branch either (micro bars are usually edge case)
         else if(!bar->next && bar->prev){
-          bar->prev->width += bar->width;
+          bar->prev->iwidth += bar->iwidth;
           end = bar->prev;
           end->next = NULL; // remove the edge bars
         }
         // middle case
         else if(bar->next && bar->prev) // in case of merge we are not guaranteed to have both prev/next so check it
         { 
-          use_prev = (fabsf(bar->value - bar->prev->value) < fabsf(bar->value - bar->next->value));
+          use_prev = (fabsf(bar->speed_delta.total - bar->prev->speed_delta.total) < fabsf(bar->speed_delta.total - bar->next->speed_delta.total));
           if(bar->polarity == bar->prev->polarity && (bar->polarity != bar->next->polarity || use_prev)){
-            bar->prev->width += bar->width;
+            // extend prev bar
+            bar->prev->iwidth += bar->iwidth;
           }
           else if(bar->polarity == bar->next->polarity && (bar->polarity != bar->prev->polarity || !use_prev)){
-            bar->next->width += bar->width;
-            bar->next->x = bar->x;
+            // move next and extend
+            bar->next->iwidth += bar->iwidth;
+            bar->next->ix = bar->ix;
           } else {
             // both have opposite polarity -> do not merge
             continue;
@@ -1590,11 +1682,9 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
           // skip current bar in bidirectional linked list
           bar->next->prev = bar->prev;
           bar->prev->next = bar->next;
-
-          // fix order (ugly !)
-          for(it = bar->next; it && it != end->next; it = it->next){
-            it->order -= 1;
-          }
+          
+          bar->next->prev_is_adj = bar->prev_is_adj;
+          bar->prev->next_is_adj = bar->next_is_adj;
         }
       }
     }
@@ -1602,7 +1692,7 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
 
   // determine the window bar
   int window_mode = ((!predict && accel.integer & ACCEL_WINDOW) || (predict && predict_window)) ? 1 : 0;
-  int need_window = window_mode || accel.integer & ACCEL_COLOR_ALTERNATE || accel.integer & ACCEL_CUSTOM_WINDOW_COL || accel.integer & ACCEL_HL_WINDOW || accel_window_center.integer;
+  int need_window = window_mode || accel.integer & ACCEL_COLOR_ALTERNATE || accel.integer & ACCEL_CUSTOM_WINDOW_COL || accel.integer & ACCEL_HL_WINDOW || accel_window_center.integer; // TODO: aim zone missing ?
   yaw_min_distance = 2 * M_PI;
   if(need_window){
     for(it = start; it && it != end->next; it = it->next)
@@ -1637,19 +1727,19 @@ static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float con
   // default after merge
   start_origin = start;
   end_origin = end;
-  // from now on do not use index loop, iterate instead
+  // from now on do not use index loop, iterate instead from origin (well we could use start_tmp which imply the logic better then origin)
 
-  int hightlight_swap = 0;
-  if(accel.integer & ACCEL_HL_G_ADJ
-    && (
-        // relevant moves -> VQ3 strafe or sidemove, CMP only strafe
-        (!(a.pm_ps.pm_flags & PMF_PROMODE) && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
-        ||
-        (a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
-    )
-  ){
-    hightlight_swap = game.pm.cmd.rightmove > 0 ? 1 : -1;
-  } 
+  // int hightlight_swap = 0;
+  // if(accel.integer & ACCEL_HL_G_ADJ
+  //   && (
+  //       // relevant moves -> VQ3 strafe or sidemove, CMP only strafe
+  //       (!(a.pm_ps.pm_flags & PMF_PROMODE) && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
+  //       ||
+  //       (a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
+  //   )
+  // ){
+  //   hightlight_swap = game.pm.cmd.rightmove > 0 ? 1 : -1;
+  // } 
   
   // determine the start and end bars
 
@@ -2578,11 +2668,12 @@ static void PM_WalkMove( void ) {
   VectorNormalize (game.pml.forward); // aprox. 1 unit in space facing forward based on cameraview
   VectorNormalize (game.pml.right); // aprox. 1 unit in space facing right based on cameraview
 
-  for ( i = 0 ; i < 2 ; i++ ) {
+  for ( i = 0 ; i < 3 ; i++ ) {
     wishvel[i] = game.pml.forward[i]*game.pm.cmd.forwardmove + game.pml.right[i]*game.pm.cmd.rightmove; // added fractions of direction (the camera once) increased over move (127 run speed)
   }
-  // when going up or down slopes the wish velocity should Not be zero // but its value doesnt come from anywhere here so wtf...
-  wishvel[2] = 0;
+  // when going up or down slopes the wish velocity should Not be zero
+  // wishvel[2] = 0;
+  // aka ^ that is intentionally commented out, leaved there to notice the behavior
 
   VectorCopy (wishvel, wishdir);
   wishspeed = VectorNormalize(wishdir); 
