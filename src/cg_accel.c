@@ -13,7 +13,6 @@
 #include <stdlib.h>
 
 #include "cg_accel.h"
-
 #include "accel_version.h"
 
 #include "bg_pmove.h"
@@ -25,8 +24,13 @@
 #include "q_assert.h"
 #include "q_shared.h"
 
+#include "cpu_support.h"
+#include "thread_pool.h"
+
 #define ACCEL_DEBUG 0
 
+static const vec3_t vec_up = {0.f, 0.f, 1.f};
+static const float half_inv = .5f;
 
 // **** cvars ****
 
@@ -160,7 +164,7 @@ static game_t game;
 
 typedef struct
 {
-  float total; // redundant, but convenience (and ops)
+  float total; // redundant, but convenience
   float forward;
   float side;
   float up;
@@ -175,11 +179,13 @@ typedef struct graph_bar_
 {
   int               ix; // x in max pixels
   int               iwidth; // width in max pixels
+  float             pwidth; // percentage
   speed_delta_t     speed_delta; 
   int               polarity; // 1 = positive, 0 = zero, -1 = negative
   // ^ could be determined by LTZ or GTZ from value but this is tradeoff memory vs ops
-  float             angle_start; // yaw relative (left < 0, right > 0)
-  float             angle_end; // yaw relative (left < 0, right > 0)
+
+  float             angle_start; // fov based (left < 0, right > 0), we need this for calculating speed delta, store to save ops
+  float             vel_distance_angle; // fov based from bar middle point (left from velocity < 0, right from velocity > 0)
 
   // bidirectional linked list
   struct graph_bar_ *next;
@@ -190,78 +196,101 @@ typedef struct graph_bar_
   int               prev_is_adj;
 } graph_bar;
 
-#define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded \
+#define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded, MUST BE %8==0 !  \
 // ^ technically there is no real limitation besides memory block allocation
 
 typedef struct
 {
-  vec2_t    yh; // y pos, height (not scaled)
-  vec4_t    colors[COLOR_ID_LENGTH];
+  vec2_t        yh; // y pos, height (not scaled)
+  vec4_t        colors[COLOR_ID_LENGTH];
 
-  graph_bar graph[GRAPH_MAX_RESOLUTION]; // only one graph is plotted at a time
-  int       graph_size;           // how much of the ^ array is currently used
+  graph_bar     graph[GRAPH_MAX_RESOLUTION]; // only one graph is plotted at a time
+  int           graph_size;           // how much of the ^ array is currently used
 
-  float     velocity;
-  float     vel_angle;            // velocity angle
-  float     yaw_angle;            // current yaw angle
+  float         speed;
+  vec3_t        velocity;             // snapped -> solve spectator bug
+  float         vel_angle;            // velocity angle
+  float         yaw_angle;            // current yaw angle
 
-  int       resolution;           // atm this is read from game setting
-  float     resolution_ratio;     // how much real pixels is equal to 1 max pixel
-  float     resolution_ratio_inv; // inverted
-  int       center;               // resolution / 2
-  float     x_angle_ratio;        // used to convert x axis size to angle (from real pixels) \
+  int           resolution;           // atm this is read from game setting
+  float         resolution_ratio;     // how much real pixels is equal to 1 max pixel
+  float         resolution_ratio_inv; // inverted
+  int           resolution_center;    // resolution / 2
+  float         x_angle_ratio;        // used to convert x axis size to angle (from real pixels) \
   // note: using x_angle_ratio somewhere else then for angle_yaw_relative usually mean misuse, use angles instead
 
   // scaled means: in real pixels
-  float     hud_ypos_scaled;
-  float     hud_height_scaled;
-  float     base_height_scaled;
-  float     max_height_scaled;
+  float         hud_ypos_scaled;
+  float         hud_height_scaled;
+  float         base_height_scaled;
+  float         max_height_scaled;
 
-  float     neg_offset_scaled;
-  float     vcenter_offset_scaled;
+  float         neg_offset_scaled;
+  float         vcenter_offset_scaled;
 
-  float     predict_offset_scaled;
-  float     predict_crouchjump_offset_scaled;
+  float         predict_offset_scaled;
+  float         predict_crouchjump_offset_scaled;
 
-  float     edge_size_scaled;
-  float     edge_min_size_scaled;
-  float     edge_height_scaled;
-  float     edge_min_height_scaled;
-  float     edge_voffset_scaled;
+  float         edge_size_scaled;
+  float         edge_min_size_scaled;
+  float         edge_height_scaled;
+  float         edge_min_height_scaled;
+  float         edge_voffset_scaled;
 
-  float     window_end_size_scaled;
-  float     window_end_min_size_scaled;
-  float     window_end_height_scaled;
-  float     window_end_min_height_scaled;
-  float     window_end_voffset_scaled;
+  float         window_end_size_scaled;
+  float         window_end_min_size_scaled;
+  float         window_end_height_scaled;
+  float         window_end_min_height_scaled;
+  float         window_end_voffset_scaled;
 
   // guards
-  float     last_fov_x;
-  int       last_vid_width;
-  float     last_screen_x_scale;
+  float         last_fov_x;
+  int           last_vid_width;
+  float         last_screen_x_scale;
 
   // control
-  int       draw_block;
+  int           draw_block;
+
+  // used for optimization
+  float         sin_table[GRAPH_MAX_RESOLUTION];
+  float         cos_table[GRAPH_MAX_RESOLUTION];
+
+  float         half_fov_x;
+  float         half_fov_x_tan_inv;
+  float         quarter_fov_x;
+  float         quarter_fov_x_tan_inv;
+  float         half_screen_width;
+
+  thread_pool_t thread_pool;
+
+  // per frame
+  // float         wishdir_rot_x[GRAPH_MAX_RESOLUTION];
+  // float         wishdir_rot_y[GRAPH_MAX_RESOLUTION];
+  // float         vel_wishdir_rot_dot[GRAPH_MAX_RESOLUTION];
+  // float         accel_param[GRAPH_MAX_RESOLUTION];
+  float         speed_delta_total[GRAPH_MAX_RESOLUTION];
+  float         speed_delta_forward[GRAPH_MAX_RESOLUTION];
+  float         speed_delta_side[GRAPH_MAX_RESOLUTION];
+  float         speed_delta_up[GRAPH_MAX_RESOLUTION];
 
 } accel_t;
 
 static accel_t a;
 
-// used for optimization
-// its unfortunate to use struct like this
-// but we need to be able to react to changes
-// (wait, maybe screen_width is guaranteed to be the same, due to vid_restart need)
-typedef struct
+// require resolution and fov (x_angle_ratio)
+// there is no need to make this super performant since the change of resolution or fov is rare
+static void precalc_trig_tables(void)
 {
-  float half_fov_x;
-  float half_fov_x_tan_inv;
-  float quarter_fov_x;
-  float quarter_fov_x_tan_inv;
-  float half_screen_width;
-} projection_data_t;
-
-static projection_data_t projection_data;
+  int   i;
+  float angle;
+  // for each horizontal pixel
+  for(i = 0; i < a.resolution; ++i)
+  {
+    angle = (i - a.resolution_center) * a.x_angle_ratio; // (left < 0, right > 0)
+    a.sin_table[i] = sinf(angle);
+    a.cos_table[i] = cosf(angle);
+  }
+}
 
 // call after cvar init (inc. tracking)
 static void a_init(void)
@@ -270,25 +299,29 @@ static void a_init(void)
   a.last_fov_x = cg.refdef.fov_x;
 
   // initial
-  projection_data.half_fov_x = cg.refdef.fov_x / 2;
-  projection_data.half_fov_x_tan_inv = 1.f / tanf(projection_data.half_fov_x);
-  projection_data.quarter_fov_x = cg.refdef.fov_x / 4;
-  projection_data.quarter_fov_x_tan_inv = 1.f / tanf(projection_data.quarter_fov_x);
+  a.half_fov_x = cg.refdef.fov_x * half_inv;
+  a.half_fov_x_tan_inv = 1.f / tanf(a.half_fov_x);
+  a.quarter_fov_x = cg.refdef.fov_x / 4;
+  a.quarter_fov_x_tan_inv = 1.f / tanf(a.quarter_fov_x);
 
   // set guard
   a.last_vid_width = cgs.glconfig.vidWidth;
 
   // initial
-  projection_data.half_screen_width = cgs.glconfig.vidWidth / 2.f;
+  a.half_screen_width = cgs.glconfig.vidWidth * half_inv;
 
   a.resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
-  a.center = a.resolution / 2;
+  a.resolution_center = a.resolution * half_inv;
   a.resolution_ratio = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ?
       cgs.glconfig.vidWidth / (float)GRAPH_MAX_RESOLUTION
       : 1.f;
   a.resolution_ratio_inv = 1.f / a.resolution_ratio;
 
+  // use both above
   a.x_angle_ratio = cg.refdef.fov_x / a.resolution;
+
+  // pre calc sin/cos tables
+  precalc_trig_tables();
 
   // set guard
   a.last_screen_x_scale = cgs.screenXScale;
@@ -319,43 +352,46 @@ static void a_init(void)
 
 static void update_static(void)
 {
-  int x_angle_ratio_recalc = 0;
+  int fov_or_width_change = 0;
 
   // precheck
   if(a.last_fov_x != cg.refdef.fov_x || a.last_vid_width != cgs.glconfig.vidWidth){
-    x_angle_ratio_recalc = 1;
+    fov_or_width_change = 1;
   }
 
   // fox_x guard
   if(a.last_fov_x != cg.refdef.fov_x)
   {
     a.last_fov_x = cg.refdef.fov_x;
-    projection_data.half_fov_x = cg.refdef.fov_x / 2;
-    projection_data.half_fov_x_tan_inv = 1.f / tanf(projection_data.half_fov_x);
-    projection_data.quarter_fov_x = cg.refdef.fov_x / 4;
-    projection_data.quarter_fov_x_tan_inv = 1.f / tanf(projection_data.quarter_fov_x);
+    a.half_fov_x = cg.refdef.fov_x * half_inv;
+    a.half_fov_x_tan_inv = 1.f / tanf(a.half_fov_x);
+    a.quarter_fov_x = cg.refdef.fov_x / 4;
+    a.quarter_fov_x_tan_inv = 1.f / tanf(a.quarter_fov_x);
   }
 
   // vid_width guard
   if(a.last_vid_width != cgs.glconfig.vidWidth)
   {
     a.last_vid_width = cgs.glconfig.vidWidth;
-    projection_data.half_screen_width = cgs.glconfig.vidWidth / 2.f;
+    a.half_screen_width = cgs.glconfig.vidWidth * half_inv;
 
     a.resolution = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ? GRAPH_MAX_RESOLUTION : cgs.glconfig.vidWidth;
-    a.center = a.resolution / 2;
+    a.resolution_center = a.resolution * half_inv;
     a.resolution_ratio = GRAPH_MAX_RESOLUTION < cgs.glconfig.vidWidth ?
         cgs.glconfig.vidWidth / (float)GRAPH_MAX_RESOLUTION
         : 1.f;
     a.resolution_ratio_inv = 1.f / a.resolution_ratio;
   }
 
-  if(x_angle_ratio_recalc){
+  if(fov_or_width_change)
+  {
     a.x_angle_ratio = cg.refdef.fov_x / a.resolution;
+    precalc_trig_tables();
   }
 
   // x_scale guard
-  if(a.last_screen_x_scale != cgs.screenXScale){
+  if(a.last_screen_x_scale != cgs.screenXScale)
+  {
     a.last_screen_x_scale = cgs.screenXScale;
 
     a.hud_ypos_scaled = a.yh[0] * cgs.screenXScale;
@@ -575,7 +611,7 @@ static void _vertical_center_noop(float *y, float h){
 }
 
 static void _vertical_center(float *y, float h){
-  *y -= a.vcenter_offset_scaled - h / 2; // assume h is always positive (might need abs here)
+  *y -= a.vcenter_offset_scaled - h * half_inv; // assume h is always positive (might need abs here)
 }
 
 static void (*vertical_center)(float*, float) = _vertical_center_noop;
@@ -586,10 +622,10 @@ static void _add_projection_x_0(float *x, float *w)
 {
   float angle, proj_x, proj_w;
 
-  angle = (*x / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
-  proj_x = projection_data.half_screen_width * (1 + tanf(angle) * projection_data.half_fov_x_tan_inv);
-  angle = ((*x + *w) / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
-  proj_w = (projection_data.half_screen_width * (1 + tanf(angle) * projection_data.half_fov_x_tan_inv)) - proj_x;
+  angle = (*x / a.half_screen_width - 1) * a.half_fov_x;
+  proj_x = a.half_screen_width * (1 + tanf(angle) * a.half_fov_x_tan_inv);
+  angle = ((*x + *w) / a.half_screen_width - 1) * a.half_fov_x;
+  proj_w = (a.half_screen_width * (1 + tanf(angle) * a.half_fov_x_tan_inv)) - proj_x;
    
   *x = proj_x;
   *w = proj_w;
@@ -606,10 +642,10 @@ static void _add_projection_x_2(float *x, float *w)
 {
   float angle, proj_x, proj_w;
 
-  angle = (*x / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
-  proj_x = projection_data.half_screen_width * (1 + tanf(angle / 2) * projection_data.quarter_fov_x_tan_inv);
-  angle = ((*x + *w) / projection_data.half_screen_width - 1) * projection_data.half_fov_x;
-  proj_w = (projection_data.half_screen_width * (1 + tanf(angle / 2) * projection_data.quarter_fov_x_tan_inv)) - proj_x;
+  angle = (*x / a.half_screen_width - 1) * a.half_fov_x;
+  proj_x = a.half_screen_width * (1 + tanf(angle * half_inv) * a.quarter_fov_x_tan_inv);
+  angle = ((*x + *w) / a.half_screen_width - 1) * a.half_fov_x;
+  proj_w = (a.half_screen_width * (1 + tanf(angle * half_inv) * a.quarter_fov_x_tan_inv)) - proj_x;
 
   *x = proj_x;
   *w = proj_w;
@@ -689,8 +725,8 @@ inline static void PM_AirMove_predict(int predict, int window);
 
 
 // **** primary hud functions ****
-// following three functions (init_accel, update_accel, draw_accel)
-// hud entry points, from these everything else is called
+// following functions (init_accel, update_accel, draw_accel, del_accel)
+// are entry points, from these everything else is called
 
 void init_accel(void)
 {
@@ -699,6 +735,24 @@ void init_accel(void)
 
   // a struct initialization
   a_init();
+
+  init_cpu_support();
+
+  // thread pool initialization
+  // intend to use SIMD that is why physical and not logical
+  int use_threads = get_physical_core_count() - 1; // one less
+  if(use_threads < 1)
+  {
+   use_threads = 1; 
+  }
+
+  thread_pool_init(&a.thread_pool, use_threads);
+}
+
+void del_accel(void)
+{
+  // TODO: check if this actually gets called
+  thread_pool_destroy(&a.thread_pool);
 }
 
 void update_accel(void)
@@ -714,9 +768,9 @@ void update_accel(void)
 
   game.pm_ps = *getPs();
 
-  a.velocity = VectorLength2(game.pm_ps.velocity);
+  a.speed = VectorLength2(game.pm_ps.velocity);
 
-  if (a.velocity >= accel_min_speed.value) {
+  if (a.speed >= accel_min_speed.value) {
     PmoveSingle_update();
   }
 }
@@ -725,7 +779,7 @@ void draw_accel(void)
 {
   if (!accel.integer) return;
 
-  if (a.velocity >= accel_min_speed.value) {
+  if (a.speed >= accel_min_speed.value) {
     PmoveSingle();
   }
 
@@ -827,6 +881,9 @@ inline static void PmoveSingle_update(void)
   // these are dynamic, changes every frame
   a.vel_angle = atan2f(game.pm_ps.velocity[1], game.pm_ps.velocity[0]);
   a.yaw_angle = DEG2RAD(game.pm_ps.viewangles[YAW]);
+
+  VectorCopy(game.pm_ps.velocity, a.velocity);
+  Sys_SnapVector(a.velocity); // solves bug in spectator mode
 }
 
 inline static void PmoveSingle(void)
@@ -1181,69 +1238,16 @@ inline static void draw_negative(float x, float y, float w, float h)
 
   if(accel.integer & ACCEL_VCENTER){
     if(accel.integer & ACCEL_NEG_UP){
-      y_target -= a.vcenter_offset_scaled - h / 2;
+      y_target -= a.vcenter_offset_scaled - h * half_inv;
     }
     else
     {
-      y_target += a.vcenter_offset_scaled - h / 2;
+      y_target += a.vcenter_offset_scaled - h * half_inv;
     }
   }
   
   trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
-
-// (was used only for line mode)
-// // does not set color
-// // custom vertical centering
-// inline static void draw_negative_vc(float x, float y, float w, float h, float vh)
-// {
-//   add_projection_x(&x, &w);
-
-//   float y_target;
-
-//   if(accel.integer & ACCEL_NEG_UP){
-//     y_target = ypos_scaled - zero_gap_scaled / 2 - (y - ypos_scaled);
-//   }else{
-//     y_target = (y - h) + zero_gap_scaled / 2;
-//   }
-
-//   if(accel.integer & ACCEL_VCENTER){
-//     if(accel.integer & ACCEL_NEG_UP){
-//       y_target -= vcenter_offset_scaled - vh / 2;
-//     }
-//     else
-//     {
-//       y_target += vcenter_offset_scaled - vh / 2;
-//     }
-//   }
-  
-//   trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
-// }
-
-//static void (*draw_polar)(const graph_bar * const, int, float, float);
-// inline static void _draw_vline(const graph_bar * const bar, int side, float y_offset, float vline_height)
-// {
-//   if(bar->polarity > 0)
-//   {
-//     set_color_inc_pred(accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_POS);
-//     draw_positive(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
-//   }
-//   else {
-//     set_color_inc_pred(accel_vline.integer & ACCEL_VL_USER_COLOR ? RGBA_I_VLINE : RGBA_I_NEG);
-//     draw_negative(bar->x + (side == 1 ? bar->width - vline_size_scaled : 0), bar->y + bar->polarity * y_offset, (bar->width > vline_size_scaled ? vline_size_scaled : bar->width / 2), vline_height);
-//   }
-// }
-
-// inline static void vline_to(const graph_bar * const bar, int side, float dist_to_zero)
-// {
-//   if(accel_vline.integer & ACCEL_VL_LINE_H)
-//   {
-//     _draw_vline(bar, side, 0, dist_to_zero);
-//   }
-//   else if(dist_to_zero > line_size_scaled) {
-//     _draw_vline(bar, side, line_size_scaled, dist_to_zero - line_size_scaled);
-//   }
-// }
 
 
 inline static float angle_short_radial_distance(float a_, float b_)
@@ -1370,8 +1374,6 @@ inline static void PM_ClipVelocity( vec3_t in, vec3_t normal, vec3_t out, float 
     }
 }
 
-static const vec3_t vec_up = {0.f, 0.f, 1.f};
-
 // the function to calculate speed delta
 // does not modify a.pm_ps.velocity
 inline static speed_delta_t calc_speed_delta_walk(const vec3_t wishdir, float const wishspeed, float const accel_)
@@ -1408,9 +1410,9 @@ inline static speed_delta_t calc_speed_delta_walk(const vec3_t wishdir, float co
     velpredict[i] += accelspeed * wishdir[i];
   }
 
-  // clipping
   float speed = VectorLength(velpredict);
 
+  // clipping
   PM_ClipVelocity(velpredict, game.pml.groundTrace.plane.normal,
       velpredict, OVERCLIP );
       
@@ -1478,7 +1480,7 @@ inline static speed_delta_t calc_speed_delta_air(const vec3_t wishdir, float con
 
   result.total = VectorLength(velpredict) - VectorLength(velocity);
   result.forward = DotProduct(velpredict, wishdir) - forwardspeed;
-  result.up = DotProduct(velpredict, vec_up) - DotProduct(velocity, vec_up); // yea while grounded there is up portion !
+  result.up = DotProduct(velpredict, vec_up) - DotProduct(velocity, vec_up);
   result.side = result.total - result.forward - result.up;
 
   return result;
@@ -1507,27 +1509,28 @@ PM_Accelerate
 Handles user intended acceleration
 ==============
 */
-inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_, int move_type, int predict) // TODO: remove move_type and predict -> split this function into versions
+inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_, int move_type, int predict, int predict_window) // TODO: remove move_type and predict -> split this function into versions
 {
-  int i, i_color;
-  float y, height, center_angle, angle_yaw_relative, normalizer, yaw_min_distance, yaw_distance, norm_speed;
+  int i, i_color, walk, special_air_case;
+  float y, height, angle, angle_end, angle_middle, normalizer, yaw_min_distance, yaw_distance, norm_speed;
   speed_delta_t speed_delta;
-  vec3_t wishdir_rotated;
+  vec3_t velocity, wishdir_rotated;
   graph_bar *bar, *bar_tmp, *window_bar, *center_bar;
   graph_bar *it, *start, *start_origin, *end_origin;
   graph_bar *end; // end is included in loop (last valid element)
   int omit;
 
-   center_angle = 0;
    window_bar = NULL;
    center_bar = NULL;
    omit = 0;
 
+  walk = move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK;
+  special_air_case = move_type == MOVE_AIR_CPM && (!game.pm.cmd.rightmove || game.pm.cmd.forwardmove);
   
   // theoretical maximum is: addspeed * sin(45) * 2, but in practice its way less
   // hardcoded for now
   // inacurate approximation
-   norm_speed = a.velocity;
+   norm_speed = a.speed;
   // dynamic normalizer breaks at 7000ups (value goes negative at this point), since this is an approximation, we can't make it bullet proof, hence this hotfix:
   if( norm_speed > 6000){
      norm_speed = 6000;
@@ -1541,42 +1544,39 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
 
   // recalculate the graph
   a.graph_size = 0;
+  VectorCopy(a.velocity, velocity);
+  PM_Friction(velocity);
+
+  // TODO: call fast math
 
   // for each horizontal pixel
   for(i = 0; i < a.resolution; ++i)
   {
-    angle_yaw_relative = (i - (a.resolution / 2.f)) * a.x_angle_ratio; // (left < 0, right > 0)
-
-    if(i == a.center){
-      // the current (where the cursor points to)
-        center_angle = angle_yaw_relative;
-    }
+    // we have trig table, no longer need this
+    //angle = (i - a.resolution_center) * a.x_angle_ratio; // (left < 0, right > 0)
     
     // rotating wishdir vector along whole x axis
     VectorCopy(wishdir, wishdir_rotated);
-    rotate_point_by_angle_cw(wishdir_rotated, angle_yaw_relative);
+    rotate_point_by_angle_cw(wishdir_rotated, angle);
 
-    // special case wishdir related values need to be recalculated (accel)
-    if (move_type == MOVE_AIR_CPM && (!game.pm.cmd.rightmove || game.pm.cmd.forwardmove))
+    // calc speed delta
+    if(walk)
     {
+      speed_delta = calc_speed_delta_walk(wishdir_rotated, wishspeed, accel_);
+    } else if(special_air_case){
+      // special case wishdir related values need to be recalculated (accel is different)
       if(DotProduct(game.pm_ps.velocity, wishdir_rotated) < 0){
         speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, 2.5f); // cpm extra zone
       }else{
         speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, pm_airaccelerate);
       }
-    }
-    else
-    {
-      if(move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK){
-        speed_delta = calc_speed_delta_walk(wishdir_rotated, wishspeed, accel_);
-      }else{
-        speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, accel_);
-      }
+    } else {
+      speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, accel_);
     }
 
     if(
       // automatically omit negative accel when plotting predictions, also when negatives are disabled ofc
-      speed_delta.total <= 0 // there are overall more negative bars, but negative bars are usually disabled
+      speed_delta.total <= 0 // there are overall more negative bars, but negative bars are usually disabled -> do not predict branch
       && (predict || accel_neg_mode.value == 0)
     ){
       omit = 1;
@@ -1589,7 +1589,6 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
         && !omit 
     ){
       a.graph[a.graph_size-1].iwidth += 1;
-      a.graph[a.graph_size-1].angle_end = angle_yaw_relative;
     }
     else{
       bar = &(a.graph[a.graph_size]);
@@ -1605,8 +1604,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
       //bar->y = a.hud_ypos_scaled + bar->height * -1; // * -1 because of y axis orientation
       bar->iwidth = 1; // a.resolution_ratio;
       bar->speed_delta = speed_delta;
-      bar->angle_start = angle_yaw_relative;
-      bar->angle_end = angle_yaw_relative; // when they are same this is single-pixel-wide bar
+      bar->angle_start = angle;
       if(__builtin_expect(a.graph_size, 1)){
         // set prev and next
         bar->prev = &(a.graph[a.graph_size-1]);
@@ -1622,6 +1620,10 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
       // we just created new bar -> reset the omit state
       omit = 0;
       ++a.graph_size;
+    }
+
+    if(__builtin_expect(i == a.resolution_center, 0)){
+
     }
   }
 
@@ -1663,48 +1665,51 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
           end->next = NULL; // remove the edge bars
         }
         // middle case
-        else if(bar->next && bar->prev) // in case of merge we are not guaranteed to have both prev/next so check it
-        { 
-          use_prev = (fabsf(bar->speed_delta.total - bar->prev->speed_delta.total) < fabsf(bar->speed_delta.total - bar->next->speed_delta.total));
-          if(bar->polarity == bar->prev->polarity && (bar->polarity != bar->next->polarity || use_prev)){
-            // extend prev bar
-            bar->prev->iwidth += bar->iwidth;
-          }
-          else if(bar->polarity == bar->next->polarity && (bar->polarity != bar->prev->polarity || !use_prev)){
-            // move next and extend
-            bar->next->iwidth += bar->iwidth;
-            bar->next->ix = bar->ix;
-          } else {
-            // both have opposite polarity -> do not merge
-            continue;
-          }
-
-          // skip current bar in bidirectional linked list
-          bar->next->prev = bar->prev;
-          bar->prev->next = bar->next;
-          
-          bar->next->prev_is_adj = bar->prev_is_adj;
-          bar->prev->next_is_adj = bar->next_is_adj;
+        else if(__builtin_expect(!bar->next || !bar->prev, 0)) // in case of merge we are not guaranteed to have both prev/next so check it
+        {
+          continue;
         }
+        use_prev = (fabsf(bar->speed_delta.total - bar->prev->speed_delta.total) < fabsf(bar->speed_delta.total - bar->next->speed_delta.total));
+        if(bar->polarity == bar->prev->polarity && (bar->polarity != bar->next->polarity || use_prev)){
+          // extend prev bar
+          bar->prev->iwidth += bar->iwidth;
+        }
+        else if(bar->polarity == bar->next->polarity && (bar->polarity != bar->prev->polarity || !use_prev)){
+          // move next and extend
+          bar->next->iwidth += bar->iwidth;
+          bar->next->ix = bar->ix;
+        } else {
+          // both have opposite polarity -> do not merge
+          continue;
+        }
+
+        // skip current bar in linked list
+        bar->next->prev = bar->prev;
+        bar->prev->next = bar->next;
+        
+        bar->next->prev_is_adj = bar->prev_is_adj;
+        bar->prev->next_is_adj = bar->next_is_adj;
       }
     }
   }
+  // from now on do not use index loop, iterate instead
 
-  // determine the window bar
-  int window_mode = ((!predict && accel.integer & ACCEL_WINDOW) || (predict && predict_window)) ? 1 : 0;
-  int need_window = window_mode || accel.integer & ACCEL_COLOR_ALTERNATE || accel.integer & ACCEL_CUSTOM_WINDOW_COL || accel.integer & ACCEL_HL_WINDOW || accel_window_center.integer; // TODO: aim zone missing ?
-  yaw_min_distance = 2 * M_PI;
-  if(need_window){
-    for(it = start; it && it != end->next; it = it->next)
-    {
-      bar = it;  
-      if(need_window && bar->polarity == 1){
-        yaw_distance = fabsf(angle_short_radial_distance(vel_angle, yaw_angle + bar->angle_start)); // potentially wrong (sign ?)
-        if(yaw_min_distance > yaw_distance){
-          yaw_min_distance = yaw_distance;
-          window_bar = bar;
-        }
-      }
+  
+  yaw_min_distance = 2 * M_PI; // MAX
+  for(it = start; it && it != end->next; it = it->next)
+  {
+    // set angles
+    bar = it;
+    angle_end = bar->angle_start + (bar->iwidth - 1) * a.x_angle_ratio; // when they are same this is single-pixel-wide bar
+    angle_middle = (bar->angle_start + angle_end) * half_inv;
+    bar->vel_distance_angle = angle_short_radial_distance(a.vel_angle, a.yaw_angle + angle_middle);
+
+    // determine the window bar (window bar is build-in now)
+    if(bar->polarity != 1){ continue; }
+    yaw_distance = fabsf(bar->vel_distance_angle);
+    if(yaw_min_distance > yaw_distance){
+      yaw_min_distance = yaw_distance;
+      window_bar = bar;
     }
   }
 
@@ -1712,7 +1717,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
   for(it = start; it && it != end->next; it = it->next)
   {
     bar = it;
-    if(is_angle_within_bar(bar, center_angle)){
+    if(is_angle_within_bar(bar, 0)){
       center_bar = bar;
       break;
     }
@@ -1724,26 +1729,8 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
   }
   #endif
 
-  // default after merge
-  start_origin = start;
-  end_origin = end;
-  // from now on do not use index loop, iterate instead from origin (well we could use start_tmp which imply the logic better then origin)
-
-  // int hightlight_swap = 0;
-  // if(accel.integer & ACCEL_HL_G_ADJ
-  //   && (
-  //       // relevant moves -> VQ3 strafe or sidemove, CMP only strafe
-  //       (!(a.pm_ps.pm_flags & PMF_PROMODE) && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
-  //       ||
-  //       (a.pm.cmd.forwardmove && a.pm.cmd.rightmove)
-  //   )
-  // ){
-  //   hightlight_swap = game.pm.cmd.rightmove > 0 ? 1 : -1;
-  // } 
-  
-  // determine the start and end bars
-
-  // when drawing just window bar skip all other positive (when we do not got window bar, draw full graph as normally)
+  int window_mode = (!predict && accel.integer & ACCEL_WINDOW) || (predict && predict_window);
+  // when drawing just window bar skip all other positive (when we do not got window bar, draw full graph as normally -> that never happend)
   if(window_mode && window_bar){
     // except when window_threshold is reached
     // grow positive both sides 
@@ -1777,17 +1764,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
     }
   }
 
-  // start and end are at final stage lets get ordering right so we can alternate colors without color flickering
-
-  if(accel.integer & ACCEL_COLOR_ALTERNATE){
-    int count = 0;
-    if(window_bar){
-      for(it = window_bar; it; it = it->prev){
-        count += 1;
-      }
-    }
-    color_alternate_origin = color_alternate = !(count % 2); // try to keep same alternating colors 
-  }
+  // start and end are at final stage
 
 
   // calculate actual size of window center
@@ -1824,7 +1801,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
         window_center_size_calculated = window_bar->width;
       }
 
-      window_parts_size = (window_bar->width - window_center_size_calculated) / 2;
+      window_parts_size = (window_bar->width - window_center_size_calculated) * half_inv;
     }
     // aim zone
     if(accel_aim_zone.integer){
@@ -2204,7 +2181,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
   if(!predict && window_bar){
     if(accel_window_center.integer){
       // would be easier to create actual or just helper bar and just pass it to the is_within_angle function
-      if(accel_window_center.integer & ACCEL_WINDOW_CENTER_HL && window_bar->angle - window_parts_size * resolution_ratio_inv * x_angle_ratio > center_angle && window_bar->angle - (window_parts_size + window_center_size_calculated) * resolution_ratio_inv * x_angle_ratio < center_angle){
+      if(accel_window_center.integer & ACCEL_WINDOW_CENTER_HL && window_bar->angle - window_parts_size * resolution_ratio_inv * x_angle_ratio > 0 && window_bar->angle - (window_parts_size + window_center_size_calculated) * resolution_ratio_inv * x_angle_ratio < 0){
         set_color_inc_pred(RGBA_I_WINDOW_CENTER_HL);
         // i_color = RGBA_I_BORDER_WINDOW_CENTER_HL;
       }
@@ -2227,7 +2204,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
       if(((accel_window_center.integer & ACCEL_WINDOW_CENTER_VCENTER_FORCE) && (accel_window_center.integer & ACCEL_WINDOW_CENTER_VCENTER))
         || (!(accel_window_center.integer & ACCEL_WINDOW_CENTER_VCENTER_FORCE) && (accel.integer & ACCEL_VCENTER))
       ){
-        y_target = hud_ypos_scaled - vcenter_offset_scaled - height / 2;
+        y_target = hud_ypos_scaled - vcenter_offset_scaled - height * half_inv;
       }else{
         y_target = hud_ypos_scaled - height;
       }
@@ -2321,7 +2298,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
       }
 
       // would be easier to create actual or just helper bar and just pass it to the is_within_angle function
-      if(accel_aim_zone.integer & ACCEL_AIM_HL && window_bar->angle - aim_zone_offset * resolution_ratio_inv * x_angle_ratio > center_angle && window_bar->angle - (aim_zone_offset + aim_zone_size_calculated) * resolution_ratio_inv * x_angle_ratio < center_angle){
+      if(accel_aim_zone.integer & ACCEL_AIM_HL && window_bar->angle - aim_zone_offset * resolution_ratio_inv * x_angle_ratio > 0 && window_bar->angle - (aim_zone_offset + aim_zone_size_calculated) * resolution_ratio_inv * x_angle_ratio < 0){
         set_color_inc_pred(RGBA_I_WINDOW_END_HL);
         // i_color = RGBA_I_BORDER_AIM_ZONE_HL;
       }
@@ -2346,7 +2323,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
       if(((accel_aim_zone.integer & ACCEL_AIM_VCENTER_FORCE) && (accel_aim_zone.integer & ACCEL_AIM_VCENTER))
         || (!(accel_aim_zone.integer & ACCEL_AIM_VCENTER_FORCE) && (accel.integer & ACCEL_VCENTER))
       ){
-        y_target = hud_ypos_scaled - vcenter_offset_scaled - height / 2;
+        y_target = hud_ypos_scaled - vcenter_offset_scaled - height * half_inv;
       }
       else
       {
@@ -2381,52 +2358,6 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
       }
     }
   }
-
-  // condensed / zero bars
-  if(!predict)
-  {
-    if(accel.integer & ACCEL_CB_ACTIVE)
-    {
-      color_alternate = color_alternate_origin;
-      for(it = start_origin; it && it != end_origin->next; it = it->next)
-      {
-        bar = it;
-        if(bar->polarity > 0){
-          if(accel.integer & ACCEL_HL_ACTIVE && center_bar && bar == center_bar){
-            i_color = RGBA_I_HL_POS;
-          }
-          else if(accel.integer & ACCEL_COLOR_ALTERNATE)
-          {
-            if(color_alternate){
-              i_color = RGBA_I_ALT;
-            }else{
-              i_color = RGBA_I_POS;
-            }
-            color_alternate = !color_alternate;
-          }
-          else {
-            i_color = RGBA_I_POS;
-          }
-        }
-        else if(bar->polarity < 0){
-          if(accel.integer & ACCEL_HL_ACTIVE && center_bar && bar == center_bar){
-            i_color = RGBA_I_HL_NEG;
-          }
-          else {
-            i_color = RGBA_I_NEG;
-          }
-        }
-        else {
-          i_color = RGBA_I_ZERO;
-        }
-
-        if((predict && bar->polarity > 0) || !predict){
-          set_color_inc_pred(i_color);
-          draw_positive(bar->x, ypos_scaled, bar->width, gap_scaled);
-        }
-      }
-    }
-    // / condensed / zero bars
 
     // edges
     if(accel_edge.integer){
@@ -2509,8 +2440,8 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
         if(((accel_edge.integer & ACCEL_EDGE_VCENTER_FORCE) && (accel_edge.integer & ACCEL_EDGE_VCENTER))
           || (!(accel_edge.integer & ACCEL_EDGE_VCENTER_FORCE) && (accel.integer & ACCEL_VCENTER))
         ){
-          ly = hud_ypos_scaled - vcenter_offset_scaled - lh / 2;
-          ry = hud_ypos_scaled - vcenter_offset_scaled - rh / 2;
+          ly = hud_ypos_scaled - vcenter_offset_scaled - lh * half_inv;
+          ry = hud_ypos_scaled - vcenter_offset_scaled - rh * half_inv;
         }
 
         float lw = edge_size_scaled,
@@ -2557,10 +2488,10 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
 
       y = hud_ypos_scaled + hud_height_scaled * (center_bar->value / normalizer) * -1;
       if(center_bar->value > 0){
-        draw_positive(center - (accel_point_line_size.value * cgs.screenXScale) / 2, y, accel_point_line_size.value * cgs.screenXScale, ypos_scaled - y);
+        draw_positive(center - (accel_point_line_size.value * cgs.screenXScale) * half_inv, y, accel_point_line_size.value * cgs.screenXScale, ypos_scaled - y);
       }
       else if(center_bar->value < 0){
-        draw_negative(center - (accel_point_line_size.value * cgs.screenXScale) / 2, y, accel_point_line_size.value * cgs.screenXScale, y - ypos_scaled);
+        draw_negative(center - (accel_point_line_size.value * cgs.screenXScale) * half_inv, y, accel_point_line_size.value * cgs.screenXScale, y - ypos_scaled);
       }
     } // /point line
   }
@@ -2610,12 +2541,16 @@ static void PM_AirMove( void ) {
   // not on ground, so little effect on velocity
   if (game.pm_ps.pm_flags & PMF_PROMODE && accel_trueness.integer & ACCEL_TN_CPM) //  && (!pms.pm.cmd.forwardmove && pms.pm.cmd.rightmove) => there is also forward move
   {
-    PM_Accelerate(wishdir,
-        (!game.pm.cmd.forwardmove && game.pm.cmd.rightmove && wishspeed > cpm_airwishspeed ?
-        cpm_airwishspeed : wishspeed),
-        (!game.pm.cmd.forwardmove && game.pm.cmd.rightmove ? cpm_airstrafeaccelerate :
-        (DotProduct(game.pm_ps.velocity, wishdir) < 0 ? 2.5f : pm_airaccelerate)),
+    if(!game.pm.cmd.forwardmove && game.pm.cmd.rightmove){
+      PM_Accelerate(wishdir,
+        (wishspeed > cpm_airwishspeed ? cpm_airwishspeed : wishspeed),
+        cpm_airstrafeaccelerate, MOVE_AIR_CPM);
+    }
+    else {
+      PM_Accelerate(wishdir, wishspeed,
+        (DotProduct(game.pm_ps.velocity, wishdir) < 0 ? 2.5f : pm_airaccelerate),
       MOVE_AIR_CPM);
+    }
   }
   else
   {

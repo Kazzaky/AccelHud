@@ -4,5 +4,6 @@
 void init_accel(void);
 void update_accel(void);
 void draw_accel(void);
+void del_accel(void);
 
 #endif // CG_ACCEL_H

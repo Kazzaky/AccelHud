@@ -20,6 +20,7 @@ extern void __real_init_hud(void);
 extern void __real_update_hud(void);
 extern void __real_draw_hud(void);
 extern qboolean __real_trap_GetUserCmd(int32_t, usercmd_t*);
+extern void __real_del_hud(void);
 
 static vmCvar_t flickfree;
 
@@ -228,5 +229,15 @@ qboolean __wrap_trap_GetUserCmd(int32_t cmdNumber, usercmd_t* ucmd)
     }
 
     return res;
+}
+
+#if __APPLE__
+void del_hud(void)
+#else
+void __wrap_del_hud(void)
+#endif
+{
+    del_accel();
+    __real_del_hud();
 }
 

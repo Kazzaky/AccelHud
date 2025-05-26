@@ -8,11 +8,13 @@ void init_hud(void);
 void update_hud(void);
 void draw_hud(void);
 qboolean trap_GetUserCmd(int32_t, usercmd_t*);
+void del_hud(void);
 #else
 void __wrap_init_hud(void);
 void __wrap_update_hud(void);
 void __wrap_draw_hud(void);
 qboolean __wrap_trap_GetUserCmd(int32_t, usercmd_t*);
+void __wrap_del_hud(void);
 #endif
 
 #endif //CG_MAIN_E_H

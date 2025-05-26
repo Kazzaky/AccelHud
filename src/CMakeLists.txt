@@ -10,7 +10,7 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
     add_custom_command(OUTPUT
         ${CMAKE_BINARY_DIR}/cg_hud.c.o
-        COMMAND ${OBJCOPY_CMD} --redefine-sym _init_hud=___real_init_hud --redefine-sym _update_hud=___real_update_hud --redefine-sym _draw_hud=___real_draw_hud ../cgame_proxymod/src/CMakeFiles/cgame_obj.dir/cg_hud.c.o
+        COMMAND ${OBJCOPY_CMD} --redefine-sym _init_hud=___real_init_hud --redefine-sym _update_hud=___real_update_hud --redefine-sym _draw_hud=___real_draw_hud --redefine-sym _del_hud=___real_del_hud ../cgame_proxymod/src/CMakeFiles/cgame_obj.dir/cg_hud.c.o
         DEPENDS cgame_obj
         VERBATIM
     )
@@ -28,6 +28,6 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
     add_dependencies(${BINARY_NAME} cgame_obj_mod)
 else()
-    target_link_options(${BINARY_NAME} PRIVATE "LINKER:--wrap,init_hud,--wrap,update_hud,--wrap,draw_hud,--wrap,trap_GetUserCmd")
-    target_link_options(UnitTest PRIVATE "LINKER:--wrap,init_hud,--wrap,update_hud,--wrap,draw_hud,--wrap,trap_GetUserCmd")
+    target_link_options(${BINARY_NAME} PRIVATE "LINKER:--wrap,init_hud,--wrap,update_hud,--wrap,draw_hud,--wrap,trap_GetUserCmd,--wrap,del_hud")
+    target_link_options(UnitTest PRIVATE "LINKER:--wrap,init_hud,--wrap,update_hud,--wrap,draw_hud,--wrap,trap_GetUserCmd,--wrap,del_hud")
 endif()
