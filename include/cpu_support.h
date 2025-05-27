@@ -1,8 +1,6 @@
 #ifndef CPU_SUPPORT_H
 #define CPU_SUPPORT_H
 
-void init_cpu_support(void);
-
 // int cpu_supports_sse2(void);
 // int cpu_supports_sse41(void);
 // int cpu_supports_avx(void);
@@ -15,6 +13,6 @@ typedef struct {
 	int avx;
 } cpu_support_info_t;
 
-static cpu_support_info_t cpu_support_info;
+cpu_support_info_t get_cpu_support(void);
 
 #endif // CPU_SUPPORT_H

@@ -3,6 +3,85 @@
 
 #include "simd_hint.def.h"
 
+// **** following functions are SIMD version derived from following code: ****
+// PM_Accelerate(...){
+//   ...
+//   // special case wishdir related values need to be adjusted (accel is different)
+//   if (move_type == MOVE_AIR_CPM && (!a.pm.cmd.rightmove || a.pm.cmd.forwardmove))
+//   {
+//     if(DotProduct(a.pm_ps.velocity, wishdir_rotated) < 0){
+//       speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, 2.5f, 0);
+//     }else{
+//       // this case is also required because the current move could have been ^ that one, which is no longer valid
+//       speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, pm_airaccelerate, 0);
+//     }
+//   }
+//   else
+//   {
+//     speed_delta = calc_accelspeed(wishdir_rotated, wishspeed, accel_, 0);
+//   }
+//   ...
+// }
+//
+// // the function to calculate delta
+// // does not modify a.pm_ps.velocity (not sure anymore since its edited to be used in old version)
+// static float calc_accelspeed(const vec3_t wishdir, float const wishspeed, float const accel_){
+//   int    i;
+//   float  addspeed, accelspeed, currentspeed;
+//   vec3_t velpredict;
+//   vec3_t velocity;
+  
+//   VectorCopy(a.pm_ps.velocity, velocity);
+
+//   Sys_SnapVector(velocity); // solves bug in spectator mode
+
+//   PM_Friction(velocity);
+
+//   currentspeed = DotProduct (velocity, wishdir); // the velocity speed part regardless the wish direction
+
+//   addspeed = wishspeed - currentspeed;
+
+//   if (addspeed <= 0) {
+//     return 0;
+//   }
+
+//   accelspeed = accel_*pm_frametime*wishspeed; // fixed pmove
+//   if (accelspeed > addspeed) {
+//       accelspeed = addspeed;
+//   }
+
+//   VectorCopy(velocity, velpredict);
+    
+//   for (i=0 ; i<3 ; i++) {
+//     velpredict[i] += accelspeed*wishdir[i];
+//   }
+
+//   // add aircontrol to predict velocity vector
+//   if(move_type == MOVE_AIR_CPM && wishspeed && !a.pm.cmd.forwardmove && a.pm.cmd.rightmove) PM_Aircontrol(wishdir, velpredict);
+
+//   // clipping
+//   if((move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK))
+//   {
+//     float speed = VectorLength(velpredict);
+
+//     PM_ClipVelocity(velpredict, a.pml.groundTrace.plane.normal,
+//         velpredict, OVERCLIP );
+        
+//     VectorNormalize(velpredict);
+//     VectorScale(velpredict, speed, velpredict);
+//   }
+//   else if((move_type == MOVE_AIR || move_type == MOVE_AIR_CPM)
+//       && a.pml.groundPlane)
+//   {
+//     PM_ClipVelocity(velpredict, a.pml.groundTrace.plane.normal, velpredict, OVERCLIP );
+//   }
+
+//   // add snapping to predict velocity vector
+//   Sys_SnapVector(velpredict);
+  
+//   return VectorLength(velpredict) - VectorLength(velocity);
+// }
+
 static inline SIMD_TYPE SIMD_POSTFIX(vector_length)
 (
   const SIMD_TYPE *v_x, const SIMD_TYPE *v_y, const SIMD_TYPE *v_z
@@ -151,7 +230,6 @@ static inline void SIMD_POSTFIX(aircontrol)(
 void SIMD_POSTFIX(calc_speed_delta_walk_worker)(int thread_id, int total_threads, void *job_data)
 {
   int i;
-  float accelspeed;
 
   SIMD_POSTFIX(speed_delta_job_t)* job = (SIMD_POSTFIX(speed_delta_job_t)*)job_data;
 
@@ -165,12 +243,9 @@ void SIMD_POSTFIX(calc_speed_delta_walk_worker)(int thread_id, int total_threads
     end = job->resolution;
   }
 
-  // no need to do this operation in vector, scalar is fine:
-  accelspeed = job->accel * pm_frametime * job->wishspeed;
-
+  const SIMD_TYPE v_accelspeed = SIMD(set1_ps)(job->accel * pm_frametime * job->wishspeed);
   const SIMD_TYPE v_zero = SIMD(setzero_ps)();
   const SIMD_TYPE v_one = SIMD(set1_ps)(1.f);
-  //SIMD_TYPE v_z_dot = SIMD(mul_ps)(job->v_velocity[2], job->v_wishdir[2]);
 
   for(i = start; i < end; i += SIMD_WIDTH)
   {
@@ -192,15 +267,15 @@ void SIMD_POSTFIX(calc_speed_delta_walk_worker)(int thread_id, int total_threads
     // calc dotproduct(velocity, wishdir rotated)
     SIMD_TYPE v_vel_wish_dot = SIMD(add_ps)(
       SIMD(add_ps)(
-        SIMD(mul_ps)(job->v_velocity[0], v_wishdir_rot_x),
-        SIMD(mul_ps)(job->v_velocity[1], v_wishdir_rot_y)
+        SIMD(mul_ps)(job->v_velocity_sf[0], v_wishdir_rot_x),
+        SIMD(mul_ps)(job->v_velocity_sf[1], v_wishdir_rot_y)
       ),
-      *job->v_vel_wish_z_dot
+      *job->v_vel_wish_z_square_sf
     );
 
     SIMD_TYPE v_addspeed = SIMD(sub_ps)(*job->v_wishspeed, v_vel_wish_dot);
 
-    // mask to mark which lead to 0 result
+    // mask for addspeed <= 0
     SIMD_TYPE v_addspeed_mask_lez = SIMD(cmp_ps)(v_addspeed, v_zero, _CMP_LE_OQ);
 
     if (SIMD(movemask_ps)(v_addspeed_mask_lez) == 0) {
@@ -209,29 +284,27 @@ void SIMD_POSTFIX(calc_speed_delta_walk_worker)(int thread_id, int total_threads
         SIMD(storeu_ps)(&job->speed_delta_forward[i], v_zero);
         SIMD(storeu_ps)(&job->speed_delta_side[i], v_zero);
         SIMD(storeu_ps)(&job->speed_delta_up[i], v_zero);
+        SIMD(storeu_ps)(&job->speed_delta_plane[i], v_zero);
         continue;
     }
 
-    // accelspeed precalced as scalar (wont be the case for air)
-    SIMD_TYPE v_accelspeed = SIMD(set1_ps)(accelspeed);
-
-    v_accelspeed = SIMD(min_ps)(v_accelspeed, v_addspeed);
+    SIMD_TYPE v_accelspeed_clamp = SIMD(min_ps)(v_accelspeed, v_addspeed);
 
     // apply the accelspeed to each velocity axis
     SIMD_TYPE v_velpredict[3];
     v_velpredict[0] = SIMD(add_ps)(
-      job->v_velocity[0],
-      SIMD(mul_ps)(v_accelspeed, v_wishdir_rot_x)
+      job->v_velocity_sf[0],
+      SIMD(mul_ps)(v_accelspeed_clamp, v_wishdir_rot_x)
     );
 
     v_velpredict[1] = SIMD(add_ps)(
-      job->v_velocity[1],
-      SIMD(mul_ps)(v_accelspeed, v_wishdir_rot_y)
+      job->v_velocity_sf[1],
+      SIMD(mul_ps)(v_accelspeed_clamp, v_wishdir_rot_y)
     );
 
     v_velpredict[2] = SIMD(add_ps)(
-      job->v_velocity[2],
-      SIMD(mul_ps)(v_accelspeed, job->v_wishdir[2])
+      job->v_velocity_sf[2],
+      SIMD(mul_ps)(v_accelspeed_clamp, job->v_wishdir[2])
     );
 
     SIMD_TYPE v_speed = SIMD_POSTFIX(vector_length)(&v_velpredict[0], &v_velpredict[1], &v_velpredict[2]);
@@ -286,6 +359,11 @@ void SIMD_POSTFIX(calc_speed_delta_walk_worker)(int thread_id, int total_threads
       v_speed_delta_up
     );
 
+    SIMD_TYPE v_speed_delta_plane = SIMD(add_ps)(
+      v_speed_delta_forward,
+      v_speed_delta_side
+    );
+
     // store results
     SIMD(storeu_ps)(&job->speed_delta_total[i],
       SIMD(blendv_ps)(v_zero, v_speed_delta_total, v_addspeed_mask_lez)
@@ -299,13 +377,15 @@ void SIMD_POSTFIX(calc_speed_delta_walk_worker)(int thread_id, int total_threads
     SIMD(storeu_ps)(&job->speed_delta_side[i],
       SIMD(blendv_ps)(v_zero, v_speed_delta_side, v_addspeed_mask_lez)
     );
+    SIMD(storeu_ps)(&job->speed_delta_plane[i],
+      SIMD(blendv_ps)(v_zero, v_speed_delta_plane, v_addspeed_mask_lez)
+    );
   }
 }
 
-void SIMD_POSTFIX(calc_speed_delta_air_worker)(int thread_id, int total_threads, void *job_data)
+void SIMD_POSTFIX(calc_speed_delta_air_vq3_worker)(int thread_id, int total_threads, void *job_data)
 {
   int i;
-  float accelspeed;
 
   SIMD_POSTFIX(speed_delta_job_t)* job = (SIMD_POSTFIX(speed_delta_job_t)*)job_data;
 
@@ -319,12 +399,9 @@ void SIMD_POSTFIX(calc_speed_delta_air_worker)(int thread_id, int total_threads,
     end = job->resolution;
   }
 
-  // no need to do this operation in vector, scalar is fine:
-  accelspeed = job->accel * pm_frametime * job->wishspeed;
-
+  const SIMD_TYPE v_accelspeed = SIMD(set1_ps)(job->accel * pm_frametime * job->wishspeed);
   const SIMD_TYPE v_zero = SIMD(setzero_ps)();
   const SIMD_TYPE v_one = SIMD(set1_ps)(1.f);
-  //SIMD_TYPE v_z_dot = SIMD(mul_ps)(job->v_velocity[2], job->v_wishdir[2]);
 
   for(i = start; i < end; i += SIMD_WIDTH)
   {
@@ -346,46 +423,44 @@ void SIMD_POSTFIX(calc_speed_delta_air_worker)(int thread_id, int total_threads,
     // calc dotproduct(velocity, wishdir rotated)
     SIMD_TYPE v_vel_wish_dot = SIMD(add_ps)(
       SIMD(add_ps)(
-        SIMD(mul_ps)(job->v_velocity[0], v_wishdir_rot_x),
-        SIMD(mul_ps)(job->v_velocity[1], v_wishdir_rot_y)
+        SIMD(mul_ps)(job->v_velocity_sf[0], v_wishdir_rot_x),
+        SIMD(mul_ps)(job->v_velocity_sf[1], v_wishdir_rot_y)
       ),
-      *job->v_vel_wish_z_dot
+      *job->v_vel_wish_z_square_sf // wishdir z is constant
     );
 
     SIMD_TYPE v_addspeed = SIMD(sub_ps)(*job->v_wishspeed, v_vel_wish_dot);
 
-    // mask to mark which lead to 0 result
-    SIMD_TYPE v_addspeed_mask = SIMD(cmp_ps)(v_addspeed, v_zero, _CMP_LE_OQ);
+    // mask for addspeed <= 0
+    SIMD_TYPE v_addspeed_mask_lez = SIMD(cmp_ps)(v_addspeed, v_zero, _CMP_LE_OQ);
 
-    if (SIMD(movemask_ps)(v_addspeed_mask) == 0) {
+    if (SIMD(movemask_ps)(v_addspeed_mask_lez) == 0) {
         // all addspeed are zero -> nothing to calculate
         SIMD(storeu_ps)(&job->speed_delta_total[i], v_zero);
         SIMD(storeu_ps)(&job->speed_delta_forward[i], v_zero);
         SIMD(storeu_ps)(&job->speed_delta_side[i], v_zero);
         SIMD(storeu_ps)(&job->speed_delta_up[i], v_zero);
+        SIMD(storeu_ps)(&job->speed_delta_plane[i], v_zero);
         continue;
     }
 
-    // accelspeed precalced as scalar (wont be the case for air)
-    SIMD_TYPE v_accelspeed = SIMD(set1_ps)(accelspeed);
-
-    v_accelspeed = SIMD(min_ps)(v_accelspeed, v_addspeed);
+    SIMD_TYPE v_accelspeed_clamp = SIMD(min_ps)(v_accelspeed, v_addspeed);
 
     // apply the accelspeed to each velocity axis
     SIMD_TYPE v_velpredict[3];
     v_velpredict[0] = SIMD(add_ps)(
-      job->v_velocity[0],
-      SIMD(mul_ps)(v_accelspeed, v_wishdir_rot_x)
+      job->v_velocity_sf[0],
+      SIMD(mul_ps)(v_accelspeed_clamp, v_wishdir_rot_x)
     );
 
     v_velpredict[1] = SIMD(add_ps)(
-      job->v_velocity[1],
-      SIMD(mul_ps)(v_accelspeed, v_wishdir_rot_y)
+      job->v_velocity_sf[1],
+      SIMD(mul_ps)(v_accelspeed_clamp, v_wishdir_rot_y)
     );
 
     v_velpredict[2] = SIMD(add_ps)(
-      job->v_velocity[2],
-      SIMD(mul_ps)(v_accelspeed, job->v_wishdir[2])
+      job->v_velocity_sf[2],
+      SIMD(mul_ps)(v_accelspeed_clamp, job->v_wishdir[2])
     );
 
     if(job->air_control){
@@ -437,18 +512,214 @@ void SIMD_POSTFIX(calc_speed_delta_air_worker)(int thread_id, int total_threads,
       v_speed_delta_up
     );
 
+    SIMD_TYPE v_speed_delta_plane = SIMD(add_ps)(
+      v_speed_delta_forward,
+      v_speed_delta_side
+    );
+
     // store results
     SIMD(storeu_ps)(&job->speed_delta_total[i],
-      SIMD(blendv_ps)(v_zero, v_speed_delta_total, v_addspeed_mask)
+      SIMD(blendv_ps)(v_zero, v_speed_delta_total, v_addspeed_mask_lez)
     );
     SIMD(storeu_ps)(&job->speed_delta_forward[i],
-      SIMD(blendv_ps)(v_zero, v_speed_delta_forward, v_addspeed_mask)
+      SIMD(blendv_ps)(v_zero, v_speed_delta_forward, v_addspeed_mask_lez)
     );
     SIMD(storeu_ps)(&job->speed_delta_up[i],
-      SIMD(blendv_ps)(v_zero, v_speed_delta_up, v_addspeed_mask)
+      SIMD(blendv_ps)(v_zero, v_speed_delta_up, v_addspeed_mask_lez)
     );
     SIMD(storeu_ps)(&job->speed_delta_side[i],
-      SIMD(blendv_ps)(v_zero, v_speed_delta_side, v_addspeed_mask)
+      SIMD(blendv_ps)(v_zero, v_speed_delta_side, v_addspeed_mask_lez)
+    );
+    SIMD(storeu_ps)(&job->speed_delta_plane[i],
+      SIMD(blendv_ps)(v_zero, v_speed_delta_plane, v_addspeed_mask_lez)
+    );
+  }
+}
+
+void SIMD_POSTFIX(calc_speed_delta_air_cpm_worker)(int thread_id, int total_threads, void *job_data)
+{
+  int i;
+  // these vectors are same for all
+  SIMD_TYPE v_accelspeed, v_framewishspeed, v_pm_airaccelerate, v_two_and_half;
+
+  SIMD_POSTFIX(speed_delta_job_t)* job = (SIMD_POSTFIX(speed_delta_job_t)*)job_data;
+
+  // round up
+  int chunk_size = (job->resolution + total_threads - 1) / total_threads;
+  chunk_size = ((chunk_size + SIMD_WIDTH - 1) / SIMD_WIDTH) * SIMD_WIDTH;
+
+  int start = thread_id * chunk_size;
+  int end = start + chunk_size;
+  if(end > job->resolution){
+    end = job->resolution;
+  }
+
+  const SIMD_TYPE v_zero = SIMD(setzero_ps)();
+  const SIMD_TYPE v_one = SIMD(set1_ps)(1.f);
+
+  if(!job->sidemove)
+  {
+    v_pm_airaccelerate = SIMD(set1_ps)(pm_airaccelerate);
+    v_two_and_half = SIMD(set1_ps)(2.5f);
+    v_framewishspeed = SIMD(set1_ps)(pm_frametime * job->wishspeed);
+  }
+  else
+  {
+    v_accelspeed = SIMD(set1_ps)(job->accel * pm_frametime * job->wishspeed);
+  }
+
+  for(i = start; i < end; i += SIMD_WIDTH)
+  {
+    // load trig table
+    SIMD_TYPE v_sin = SIMD(loadu_ps)(&job->sin_table[i]);
+    SIMD_TYPE v_cos = SIMD(loadu_ps)(&job->cos_table[i]);
+
+    // rotate wishdir
+    SIMD_TYPE v_wishdir_rot_x = SIMD(add_ps)(
+      SIMD(mul_ps)(v_cos, job->v_wishdir[0]),
+      SIMD(mul_ps)(v_sin, job->v_wishdir[1])
+    );
+
+    SIMD_TYPE v_wishdir_rot_y = SIMD(sub_ps)(
+      SIMD(mul_ps)(v_cos, job->v_wishdir[1]),
+      SIMD(mul_ps)(v_sin, job->v_wishdir[0])
+    );
+
+    // calc dotproduct(velocity, wishdir rotated)
+    SIMD_TYPE v_vel_wish_dot = SIMD(add_ps)(
+      SIMD(add_ps)(
+        SIMD(mul_ps)(job->v_velocity_sf[0], v_wishdir_rot_x),
+        SIMD(mul_ps)(job->v_velocity_sf[1], v_wishdir_rot_y)
+      ),
+      *job->v_vel_wish_z_square_sf // wishdir z is constant
+    );
+
+    SIMD_TYPE v_addspeed = SIMD(sub_ps)(*job->v_wishspeed, v_vel_wish_dot);
+
+    // mask for addspeed <= 0
+    SIMD_TYPE v_addspeed_mask_lez = SIMD(cmp_ps)(v_addspeed, v_zero, _CMP_LE_OQ);
+
+    if (SIMD(movemask_ps)(v_addspeed_mask_lez) == 0) {
+        // all addspeed are zero -> nothing to calculate
+        SIMD(storeu_ps)(&job->speed_delta_total[i], v_zero);
+        SIMD(storeu_ps)(&job->speed_delta_forward[i], v_zero);
+        SIMD(storeu_ps)(&job->speed_delta_side[i], v_zero);
+        SIMD(storeu_ps)(&job->speed_delta_up[i], v_zero);
+        SIMD(storeu_ps)(&job->speed_delta_plane[i], v_zero);
+        continue;
+    }
+
+    // special cpm case
+    if(!job->sidemove)
+    {
+      // calc dotproduct(velocity original, wishdir rotated)
+      // have to use original because the friction changes it
+      SIMD_TYPE v_vel_o_wish_dot = SIMD(add_ps)(
+        SIMD(add_ps)(
+          SIMD(mul_ps)(job->v_velocity[0], v_wishdir_rot_x),
+          SIMD(mul_ps)(job->v_velocity[1], v_wishdir_rot_y)
+        ),
+        *job->v_vel_wish_z_square // wishdir z is constant
+      );
+
+      // mask for DotProduct(velocity, wishdir_rotated) < 0
+      SIMD_TYPE v_vel_o_wish_dot_mask_ltz = SIMD(cmp_ps)(v_vel_o_wish_dot, v_zero, _CMP_LT_OQ);
+
+      // wishdir is rotated -> adjusted accel
+      SIMD_TYPE v_accel = SIMD(blendv_ps)(v_pm_airaccelerate, v_two_and_half, v_vel_o_wish_dot_mask_ltz);
+
+      v_accelspeed = SIMD(mul_ps)(v_accel, v_framewishspeed);
+    }
+    // else -> v_accelspeed is const and precalculated
+
+    SIMD_TYPE v_accelspeed_clamp = SIMD(min_ps)(v_accelspeed, v_addspeed);
+
+    // apply the accelspeed to each velocity axis
+    SIMD_TYPE v_velpredict[3];
+    v_velpredict[0] = SIMD(add_ps)(
+      job->v_velocity_sf[0],
+      SIMD(mul_ps)(v_accelspeed_clamp, v_wishdir_rot_x)
+    );
+
+    v_velpredict[1] = SIMD(add_ps)(
+      job->v_velocity_sf[1],
+      SIMD(mul_ps)(v_accelspeed_clamp, v_wishdir_rot_y)
+    );
+
+    v_velpredict[2] = SIMD(add_ps)(
+      job->v_velocity_sf[2],
+      SIMD(mul_ps)(v_accelspeed_clamp, job->v_wishdir[2])
+    );
+
+    if(job->air_control){
+      SIMD_POSTFIX(aircontrol)(
+        &v_wishdir_rot_x, &v_wishdir_rot_y, &job->v_wishdir[2],
+        &v_velpredict[0], &v_velpredict[1]
+      );
+    }
+
+    if(job->ground_plane){
+      SIMD_POSTFIX(clip_velocity)(
+        &v_velpredict[0], &v_velpredict[1], &v_velpredict[2],
+        &job->v_normal[0], &job->v_normal[1], &job->v_normal[2],
+        &v_velpredict[0], &v_velpredict[1], &v_velpredict[2],
+        job->v_overbounce
+      );
+    }
+
+    // snapping
+    SIMD_POSTFIX(snap_vector)(&v_velpredict[0], &v_velpredict[1], &v_velpredict[2]);
+
+    // calc delta
+    SIMD_TYPE v_speed_delta_total = SIMD(sub_ps)(
+      SIMD_POSTFIX(vector_length)(&v_velpredict[0], &v_velpredict[1], &v_velpredict[2]),
+      *job->v_vel_length
+    );
+
+    SIMD_TYPE v_speed_delta_forward = SIMD(sub_ps)(
+      SIMD_POSTFIX(dot_product)(
+        &v_velpredict[0], &v_velpredict[1], &v_velpredict[2],
+        &v_wishdir_rot_x, &v_wishdir_rot_y, &job->v_wishdir[2]
+      ),
+      v_vel_wish_dot
+    );
+
+    SIMD_TYPE v_speed_delta_up = SIMD(sub_ps)(
+      SIMD_POSTFIX(dot_product)(
+        &v_velpredict[0], &v_velpredict[1], &v_velpredict[2],
+        &v_zero, &v_zero, &v_one
+      ),
+      *job->v_vel_up_dot
+    );
+
+    SIMD_TYPE v_speed_delta_side = SIMD(sub_ps)(
+      SIMD(sub_ps)(
+        v_speed_delta_total,
+        v_speed_delta_forward
+      ),
+      v_speed_delta_up
+    );
+
+    SIMD_TYPE v_speed_delta_plane = SIMD(add_ps)(
+      v_speed_delta_forward,
+      v_speed_delta_side
+    );
+
+    // store results
+    SIMD(storeu_ps)(&job->speed_delta_total[i],
+      SIMD(blendv_ps)(v_zero, v_speed_delta_total, v_addspeed_mask_lez)
+    );
+    SIMD(storeu_ps)(&job->speed_delta_forward[i],
+      SIMD(blendv_ps)(v_zero, v_speed_delta_forward, v_addspeed_mask_lez)
+    );
+    SIMD(storeu_ps)(&job->speed_delta_up[i],
+      SIMD(blendv_ps)(v_zero, v_speed_delta_up, v_addspeed_mask_lez)
+    );
+    SIMD(storeu_ps)(&job->speed_delta_side[i],
+      SIMD(blendv_ps)(v_zero, v_speed_delta_side, v_addspeed_mask_lez)
+    );
+    SIMD(storeu_ps)(&job->speed_delta_plane[i],
+      SIMD(blendv_ps)(v_zero, v_speed_delta_plane, v_addspeed_mask_lez)
     );
   }
 }

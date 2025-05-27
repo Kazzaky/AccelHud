@@ -18,13 +18,13 @@ __m128 sse2_rint_ps(__m128 x)
 }
 
 #include "simd_sse2.def.h"
-#include "calc_speed_delta.inl"
+#include "speed_delta_calc_impl.inl"
 
 #include "simd_sse41.def.h"
-#include "calc_speed_delta.inl"
+#include "speed_delta_calc_impl.inl"
 
 #include "simd_avx.def.h"
-#include "calc_speed_delta.inl"
+#include "speed_delta_calc_impl.inl"
 
 #include "simd.undef.h"
 

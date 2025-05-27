@@ -21,6 +21,7 @@
 #include "cg_utils.h"
 
 #include "common.h"
+#include "fast_vector_math.h"
 #include "q_assert.h"
 #include "q_shared.h"
 
@@ -42,13 +43,17 @@ static vmCvar_t accel_base_height;
 static vmCvar_t accel_max_height;
 static vmCvar_t accel_yh;
 static vmCvar_t accel_neg_mode;
+static vmCvar_t accel_component;
+static vmCvar_t accel_mirror;
+static vmCvar_t accel_mirror_component;
 
+static vmCvar_t accel_mirror_offset;
 static vmCvar_t accel_neg_offset;
 static vmCvar_t accel_vcenter_offset;
 static vmCvar_t accel_p_offset;
-static vmCvar_t accel_p_cj_offset;
+static vmCvar_t accel_p_jc_offset;
 
-static vmCvar_t accel_p_cj_overdraw;
+static vmCvar_t accel_p_jc_overdraw;
 
 static vmCvar_t accel_show_move;
 static vmCvar_t accel_show_move_vq3;
@@ -58,13 +63,13 @@ static vmCvar_t accel_show_move_vq3;
   X(accel_p_strafe_w_fm) \
   X(accel_p_strafe_w_nk) \
   X(accel_p_strafe_w_strafe) \
-  X(accel_p_cj_w_strafe) \
+  X(accel_p_jc_w_strafe) \
   X(accel_p_strafe_w_sm_vq3) \
   X(accel_p_strafe_w_fm_vq3) \
   X(accel_p_strafe_w_nk_vq3) \
   X(accel_p_strafe_w_strafe_vq3) \
-  X(accel_p_cj_w_strafe_vq3) \
-  X(accel_p_cj_w_sm_vq3) \
+  X(accel_p_jc_w_strafe_vq3) \
+  X(accel_p_jc_w_sm_vq3) \
   X(accel_p_sm_w_sm_vq3) \
   X(accel_p_sm_w_strafe_vq3) \
   X(accel_p_sm_w_fm_vq3) \
@@ -74,6 +79,10 @@ static vmCvar_t accel_show_move_vq3;
 #define X(n) static vmCvar_t n;
 PREDICTION_BIN_LIST
 #undef X
+
+static vmCvar_t accel_p_strafe_component;
+static vmCvar_t accel_p_sm_component;
+static vmCvar_t accel_p_jc_component;
 
 // static vmCvar_t accel_threshold; // -0.38 was the biggest seen plasma climb
 
@@ -115,7 +124,7 @@ static vmCvar_t accel_window_end_voffset;
   X(accel_p_strafe_rgbam, "-.2 -.1 .4 -.4") \
   X(accel_p_sidemove_rgbam, ".4 -.1 -.2 -.4") \
   X(accel_p_opposite_rgbam, ".8 .-8 .8 -.3") \
-  X(accel_p_cj_rgbam, "1 1 1 1") \
+  X(accel_p_jc_rgbam, "1 1 1 1") \
   X(accel_window_end_rgba, ".2 .4 1 .9") \
   X(accel_window_end_hl_rgba, ".3 .6 .9 .9")
   // add new colors here 
@@ -139,7 +148,7 @@ enum {
   // RGBA_I_PREDICT_WAD,
   // RGBA_I_PREDICT_AD,
   // RGBA_I_PREDICT_OPPOSITE,
-  // RGBA_I_PREDICT_CROUCHJUMP,
+  // RGBA_I_PREDICT_JUMPCROUCH,
   // RGBA_I_WINDOW_END,
   // RGBA_I_WINDOW_END_HL,
 
@@ -180,7 +189,7 @@ typedef struct graph_bar_
   int               ix; // x in max pixels
   int               iwidth; // width in max pixels
   float             pwidth; // percentage
-  speed_delta_t     speed_delta; 
+  float             speed_delta; // selected component of speed_delta
   int               polarity; // 1 = positive, 0 = zero, -1 = negative
   // ^ could be determined by LTZ or GTZ from value but this is tradeoff memory vs ops
 
@@ -229,7 +238,7 @@ typedef struct
   float         vcenter_offset_scaled;
 
   float         predict_offset_scaled;
-  float         predict_crouchjump_offset_scaled;
+  float         PREDICT_JUMPCROUCH_offset_scaled;
 
   float         edge_size_scaled;
   float         edge_min_size_scaled;
@@ -272,6 +281,7 @@ typedef struct
   float         speed_delta_forward[GRAPH_MAX_RESOLUTION];
   float         speed_delta_side[GRAPH_MAX_RESOLUTION];
   float         speed_delta_up[GRAPH_MAX_RESOLUTION];
+  float         speed_delta_plane[GRAPH_MAX_RESOLUTION];
 
 } accel_t;
 
@@ -331,7 +341,7 @@ static void a_init(void)
   a.hud_height_scaled = a.yh[1] * cgs.screenXScale;
 
   a.predict_offset_scaled = accel_p_offset.value * cgs.screenXScale;
-  a.predict_crouchjump_offset_scaled = accel_p_cj_offset.value * cgs.screenXScale;
+  a.PREDICT_JUMPCROUCH_offset_scaled = accel_p_jc_offset.value * cgs.screenXScale;
 
   a.edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
   a.edge_min_size_scaled = accel_edge_min_size.value * cgs.screenXScale;
@@ -398,7 +408,7 @@ static void update_static(void)
     a.hud_height_scaled = a.yh[1] * cgs.screenXScale;
 
     a.predict_offset_scaled = accel_p_offset.value * cgs.screenXScale;
-    a.predict_crouchjump_offset_scaled = accel_p_cj_offset.value * cgs.screenXScale;
+    a.PREDICT_JUMPCROUCH_offset_scaled = accel_p_jc_offset.value * cgs.screenXScale;
 
     a.edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
     a.edge_min_size_scaled = accel_edge_min_size.value * cgs.screenXScale;
@@ -457,9 +467,20 @@ static cvarTable_t accel_cvars[] = {
   { &CVAR_EXPAND_NAME(accel_neg_offset), "15", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_vcenter_offset), "15", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_p_offset), "30", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_p_cj_offset), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_jc_offset), "0", CVAR_ARCHIVE_ND },
 
-  { &CVAR_EXPAND_NAME(accel_p_cj_overdraw), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_jc_overdraw), "0", CVAR_ARCHIVE_ND },
+
+  { &CVAR_EXPAND_NAME(accel_component), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_mirror_component), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_strafe_component), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_sm_component), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_jc_component), "0", CVAR_ARCHIVE_ND },
+  #define ACCEL_COMPONENT_TOTAL   0 // forward + side + up
+  #define ACCEL_COMPONENT_PLANE   1 // forward + side
+  #define ACCEL_COMPONENT_FORWARD 2
+  #define ACCEL_COMPONENT_SIDE    3
+  #define ACCEL_COMPONENT_UP      4
 
   #define X(n,d) { &CVAR_EXPAND_NAME(n), d, CVAR_ARCHIVE_ND },
   COLOR_LIST
@@ -584,7 +605,8 @@ enum {
   PREDICT_STRAFE_SM,
   PREDICT_SM_STRAFE_ADD, // lets keep this for now
   PREDICT_OPPOSITE,
-  PREDICT_CROUCHJUMP
+  PREDICT_JUMPCROUCH,
+  PREDICT_MIRROR // mirror is internally threaded like prediction
 };
 
 enum {
@@ -723,6 +745,10 @@ inline static void PM_WalkMove(void);
 inline static void PM_WalkMove_predict(int predict, int window);
 inline static void PM_AirMove_predict(int predict, int window);
 
+void (*calc_speed_delta_walk_worker)(int, int, void*);
+void (*calc_speed_delta_air_vq3_worker)(int, int, void*);
+void (*calc_speed_delta_air_cpm_worker)(int, int, void*);
+
 
 // **** primary hud functions ****
 // following functions (init_accel, update_accel, draw_accel, del_accel)
@@ -736,10 +762,39 @@ void init_accel(void)
   // a struct initialization
   a_init();
 
-  init_cpu_support();
+  // select instruction set
+  cpu_support_info_t cpu_info = get_cpu_support();
+  if(cpu_info.avx)
+  {
+    #include "simd_avx.def.h"
+    calc_speed_delta_walk_worker = SIMD_POSTFIX(calc_speed_delta_walk_worker);
+    calc_speed_delta_air_vq3_worker = SIMD_POSTFIX(calc_speed_delta_air_vq3_worker);
+    calc_speed_delta_air_cpm_worker = SIMD_POSTFIX(calc_speed_delta_air_cpm_worker);
+    #include "simd.undef.h"
+  }
+  else if(cpu_info.sse41)
+  {
+    #include "simd_sse41.def.h"
+    calc_speed_delta_walk_worker = SIMD_POSTFIX(calc_speed_delta_walk_worker);
+    calc_speed_delta_air_vq3_worker = SIMD_POSTFIX(calc_speed_delta_air_vq3_worker);
+    calc_speed_delta_air_cpm_worker = SIMD_POSTFIX(calc_speed_delta_air_cpm_worker);
+    #include "simd.undef.h"
+  }
+  else if(cpu_info.sse2)
+  {
+    #include "simd_sse2.def.h"
+    calc_speed_delta_walk_worker = SIMD_POSTFIX(calc_speed_delta_walk_worker);
+    calc_speed_delta_air_vq3_worker = SIMD_POSTFIX(calc_speed_delta_air_vq3_worker);
+    calc_speed_delta_air_cpm_worker = SIMD_POSTFIX(calc_speed_delta_air_cpm_worker);
+    #include "simd.undef.h"
+  }
+  else {
+    // there is no fallback atm (sse2 is around for 20y)
+    ASSERT_TRUE(0);
+  }
 
   // thread pool initialization
-  // intend to use SIMD that is why physical and not logical
+  // intend to use SIMD, that is why physical and not logical
   int use_threads = get_physical_core_count() - 1; // one less
   if(use_threads < 1)
   {
@@ -1020,16 +1075,16 @@ inline static void PmoveSingle(void)
   }
 
   // crouchjump
-  if(!accel_p_cj_overdraw.value){
-    LABEL_CJ_OVERDRAW: 
+  if(!accel_p_jc_overdraw.value){
+    LABEL_JC_OVERDRAW: 
     // cpm
     if(game.pm_ps.pm_flags & PMF_PROMODE)
     {
       // predict same move while jumping / crouching 
-      if(accel_p_cj_w_strafe.integer && key_forwardmove && key_rightmove)
+      if(accel_p_jc_w_strafe.integer && key_forwardmove && key_rightmove)
       {
-        predict_window = accel_p_cj_w_strafe.integer & ACCEL_PREDICT_MOVE_WINDOW;
-        predict = PREDICT_CROUCHJUMP;
+        predict_window = accel_p_jc_w_strafe.integer & ACCEL_PREDICT_MOVE_WINDOW;
+        predict = PREDICT_JUMPCROUCH;
         game.pm.cmd.forwardmove = key_forwardmove;
         game.pm.cmd.rightmove = key_rightmove;
         game.pm.cmd.upmove = game.move_scale;
@@ -1039,10 +1094,10 @@ inline static void PmoveSingle(void)
     else // vq3
     {
       // predict same move while jumping / crouching // following block is doubled with different accel_crouchjump_overdraw after regular move
-      if(accel_p_cj_w_strafe_vq3.integer && key_forwardmove && key_rightmove)
+      if(accel_p_jc_w_strafe_vq3.integer && key_forwardmove && key_rightmove)
       {
-        predict_window = accel_p_cj_w_strafe_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-        predict = PREDICT_CROUCHJUMP;
+        predict_window = accel_p_jc_w_strafe_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
+        predict = PREDICT_JUMPCROUCH;
         game.pm.cmd.forwardmove = key_forwardmove;
         game.pm.cmd.rightmove = key_rightmove;
         game.pm.cmd.upmove = game.move_scale;
@@ -1050,11 +1105,11 @@ inline static void PmoveSingle(void)
       }
 
       // predict same move while jumping / crouching // following block is doubled with different accel_crouchjump_overdraw after regular move
-      if(accel_p_cj_w_sm_vq3.integer && !key_forwardmove && key_rightmove)
+      if(accel_p_jc_w_sm_vq3.integer && !key_forwardmove && key_rightmove)
       {
-        predict_window = accel_p_cj_w_sm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
+        predict_window = accel_p_jc_w_sm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
         // a/d only for vq3
-        predict = PREDICT_CROUCHJUMP;
+        predict = PREDICT_JUMPCROUCH;
         game.pm.cmd.forwardmove = key_forwardmove;
         game.pm.cmd.rightmove = key_rightmove;
         game.pm.cmd.upmove = game.move_scale;
@@ -1062,7 +1117,7 @@ inline static void PmoveSingle(void)
       }
     }
 
-    if(accel_p_cj_overdraw.value){
+    if(accel_p_jc_overdraw.value){
       // in case we get here by goto overdraw
       return;
     }
@@ -1095,8 +1150,8 @@ inline static void PmoveSingle(void)
           || (!(game.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_FORWARD))
         ))
   ){
-    if(accel_p_cj_overdraw.value){
-      goto LABEL_CJ_OVERDRAW;
+    if(accel_p_jc_overdraw.value){
+      goto LABEL_JC_OVERDRAW;
     }
     return; // -> regular move is disabled
   }
@@ -1109,8 +1164,8 @@ inline static void PmoveSingle(void)
   // regular move
   move();
  
-  if(accel_p_cj_overdraw.value){
-    goto LABEL_CJ_OVERDRAW;
+  if(accel_p_jc_overdraw.value){
+    goto LABEL_JC_OVERDRAW;
   }
 }
 
@@ -1133,8 +1188,8 @@ inline static void set_color_pred(int predict)
       trap_R_SetColor(a.colors[COLOR_ID(accel_p_sidemove_rgbam)]);
       break;
     }
-    case PREDICT_CROUCHJUMP:{
-      trap_R_SetColor(a.colors[COLOR_ID(accel_p_cj_rgbam)]);
+    case PREDICT_JUMPCROUCH:{
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_jc_rgbam)]);
       break;
     }
     case 0:
@@ -1186,7 +1241,7 @@ inline static void draw_positive_o(float x, float y, float w, float h, float off
 //   float y_target = y - zero_gap_scaled / 2;
 
 //   if(predict){
-//     y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
+//     y_target -= predict == PREDICT_JUMPCROUCH ? PREDICT_JUMPCROUCH_offset_scaled : predict_offset_scaled;
 //   }
 
 //   if(accel.integer & ACCEL_VCENTER){
@@ -1216,7 +1271,7 @@ inline static void draw_positive_o_nvc(float x, float y, float w, float h, float
   add_projection_x(&x, &w);
 
   // if(predict){
-  //   y_target -= predict == PREDICT_CROUCHJUMP ? predict_crouchjump_offset_scaled : predict_offset_scaled;
+  //   y_target -= predict == PREDICT_JUMPCROUCH ? PREDICT_JUMPCROUCH_offset_scaled : predict_offset_scaled;
   // }
 
   trap_R_DrawStretchPic(x, y + offset, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
@@ -1511,21 +1566,23 @@ Handles user intended acceleration
 */
 inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, float const accel_, int move_type, int predict, int predict_window) // TODO: remove move_type and predict -> split this function into versions
 {
-  int i, i_color, walk, special_air_case;
+  int i, i_color, walk, sidemove, component;
   float y, height, angle, angle_end, angle_middle, normalizer, yaw_min_distance, yaw_distance, norm_speed;
-  speed_delta_t speed_delta;
+  //speed_delta_t speed_delta;
+  float *speed_delta_component;
   vec3_t velocity, wishdir_rotated;
   graph_bar *bar, *bar_tmp, *window_bar, *center_bar;
   graph_bar *it, *start, *start_origin, *end_origin;
   graph_bar *end; // end is included in loop (last valid element)
   int omit;
 
-   window_bar = NULL;
-   center_bar = NULL;
-   omit = 0;
+  window_bar = NULL;
+  center_bar = NULL;
+  omit = 0;
 
   walk = move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK;
-  special_air_case = move_type == MOVE_AIR_CPM && (!game.pm.cmd.rightmove || game.pm.cmd.forwardmove);
+  sidemove = !game.pm.cmd.forwardmove && game.pm.cmd.rightmove;
+  //special_air_case = move_type == MOVE_AIR_CPM && sidemove;
   
   // theoretical maximum is: addspeed * sin(45) * 2, but in practice its way less
   // hardcoded for now
@@ -1538,16 +1595,76 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
   // there is side effect of the approximation and that is changing height profile based on speed, which falsefully give impression that accel is actually higher while it isn't
   // the trueness static boost for those who want real (accurate) height
    normalizer = (accel_trueness.integer & ACCEL_TN_STATIC_BOOST ? 2.56f * 1.41421356237f : -0.00025f * norm_speed + 1.75f);
-  if(move_type == MOVE_WALK || move_type == MOVE_WALK_SLICK){
+  if(walk){
      normalizer *= 15.f;// 38.4f * 1.41421356237f;
   }
 
-  // recalculate the graph
-  a.graph_size = 0;
+  // calc speed delta
   VectorCopy(a.velocity, velocity);
   PM_Friction(velocity);
 
-  // TODO: call fast math
+  void *user_data = create_speed_delta_job_data(wishdir, wishspeed, accel_);
+
+  // calc speed delta
+  if(walk)
+  {
+    thread_pool_run(&a.thread_pool, calc_speed_delta_walk_worker, user_data);
+  }
+  else if(move_type == MOVE_AIR_CPM)
+  {
+    thread_pool_run(&a.thread_pool, calc_speed_delta_air_cpm_worker, user_data);
+  }
+  else {
+    thread_pool_run(&a.thread_pool, calc_speed_delta_air_vq3_worker, user_data);
+  }
+
+  // pick speed delta component
+  switch(predict){
+    case PREDICT_JUMPCROUCH:
+      component = accel_p_jc_component.integer;
+      break;
+    case PREDICT_FMNK_STRAFE:
+    case PREDICT_SM_STRAFE:
+    case PREDICT_SM_STRAFE_ADD:
+      component = accel_p_strafe_component.integer;
+      break;
+    case PREDICT_OPPOSITE:
+      if(game.pm.cmd.forwardmove){
+        component = accel_p_strafe_component.integer;
+      }else{
+        component = accel_p_sm_component.integer;
+      }
+      break;
+    case PREDICT_FMNK_SM:
+    case PREDICT_STRAFE_SM:
+      component = accel_p_sm_component.integer;
+    case PREDICT_MIRROR:
+      component = accel_mirror_component.integer;
+    default:
+      component = accel_component.integer;
+      break;
+  }
+
+  switch(component){
+    case ACCEL_COMPONENT_PLANE:
+      speed_delta_component = &a.speed_delta_plane[0];
+        break;
+    case ACCEL_COMPONENT_FORWARD:
+      speed_delta_component = &a.speed_delta_forward[0];
+        break;
+    case ACCEL_COMPONENT_SIDE:
+      speed_delta_component = &a.speed_delta_side[0];
+        break;
+    case ACCEL_COMPONENT_UP:
+      speed_delta_component = &a.speed_delta_up[0];
+        break;
+    default:
+      speed_delta_component = &a.speed_delta_total[0];
+      break;
+  }
+
+  // create raw graph bars (they are modified further)
+  a.graph_size = 0;
 
   // for each horizontal pixel
   for(i = 0; i < a.resolution; ++i)
@@ -1555,37 +1672,39 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
     // we have trig table, no longer need this
     //angle = (i - a.resolution_center) * a.x_angle_ratio; // (left < 0, right > 0)
     
-    // rotating wishdir vector along whole x axis
-    VectorCopy(wishdir, wishdir_rotated);
-    rotate_point_by_angle_cw(wishdir_rotated, angle);
+    // // rotating wishdir vector along whole x axis
+    // VectorCopy(wishdir, wishdir_rotated);
+    // rotate_point_by_angle_cw(wishdir_rotated, angle);
 
-    // calc speed delta
-    if(walk)
-    {
-      speed_delta = calc_speed_delta_walk(wishdir_rotated, wishspeed, accel_);
-    } else if(special_air_case){
-      // special case wishdir related values need to be recalculated (accel is different)
-      if(DotProduct(game.pm_ps.velocity, wishdir_rotated) < 0){
-        speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, 2.5f); // cpm extra zone
-      }else{
-        speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, pm_airaccelerate);
-      }
-    } else {
-      speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, accel_);
-    }
+    // // calc speed delta
+    // if(walk)
+    // {
+    //   speed_delta = calc_speed_delta_walk(wishdir_rotated, wishspeed, accel_);
+    // } else if(move_type == MOVE_AIR_CPM && !sidemove){
+    //   // special case wishdir related values need to be adjusted (accel is different)
+    //   if(DotProduct(game.pm_ps.velocity, wishdir_rotated) < 0){
+    //     speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, 2.5f); // cpm extra zone ?
+    //   }else{
+    //     // this case is also required because the current move could have been ^ that one, which is no longer valid
+    //     speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, pm_airaccelerate);
+    //   }
+    // } else {
+    //   speed_delta = calc_speed_delta_air(wishdir_rotated, wishspeed, accel_);
+    // }
 
     if(
-      // automatically omit negative accel when plotting predictions, also when negatives are disabled ofc
-      speed_delta.total <= 0 // there are overall more negative bars, but negative bars are usually disabled -> do not predict branch
+      // automatically omit negative accel when plotting predictions
+      // also when negatives are disabled ofc
+      speed_delta_component[i] <= 0
       && (predict || accel_neg_mode.value == 0)
     ){
       omit = 1;
       continue;
     }
 
-    // grow the previous bar width when same speed_delta
+    // grow the previous bar width when speed_delta is the same
     if(
-        __builtin_expect(a.graph_size && speed_delta_eq(&a.graph[a.graph_size-1].speed_delta, &speed_delta), 1)
+        __builtin_expect(a.graph_size && speed_delta_component[i-1] == speed_delta_component[i], 1)
         && !omit 
     ){
       a.graph[a.graph_size-1].iwidth += 1;
@@ -1593,7 +1712,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
     else{
       bar = &(a.graph[a.graph_size]);
       bar->ix = i; // * a.resolution_ratio;
-      bar->polarity = (speed_delta.total > 0) - (speed_delta.total < 0);
+      bar->polarity = (speed_delta_component[i] > 0) - (speed_delta_component[i] < 0);
       // bar->height = a.hud_height_scaled * (accel.integer & ACCEL_UNIFORM_VALUE ? bar->polarity : speed_delta.total / normalizer);
       // if(accel_base_height.value > 0){
       //   bar->height += a.base_height_scaled * (bar->height > 0 ? 1 : -1); 
@@ -1603,7 +1722,7 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
       // }
       //bar->y = a.hud_ypos_scaled + bar->height * -1; // * -1 because of y axis orientation
       bar->iwidth = 1; // a.resolution_ratio;
-      bar->speed_delta = speed_delta;
+      bar->speed_delta = speed_delta_component[i];
       bar->angle_start = angle;
       if(__builtin_expect(a.graph_size, 1)){
         // set prev and next
@@ -1620,10 +1739,6 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
       // we just created new bar -> reset the omit state
       omit = 0;
       ++a.graph_size;
-    }
-
-    if(__builtin_expect(i == a.resolution_center, 0)){
-
     }
   }
 
@@ -1693,7 +1808,6 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
     }
   }
   // from now on do not use index loop, iterate instead
-
   
   yaw_min_distance = 2 * M_PI; // MAX
   for(it = start; it && it != end->next; it = it->next)
@@ -1717,7 +1831,10 @@ inline static void PM_Accelerate(const vec3_t wishdir, float const wishspeed, fl
   for(it = start; it && it != end->next; it = it->next)
   {
     bar = it;
-    if(is_angle_within_bar(bar, 0)){
+    if(
+      bar->ix <= a.resolution_center
+      && bar->ix + bar->iwidth >= a.resolution_center
+    ){
       center_bar = bar;
       break;
     }
@@ -2519,7 +2636,7 @@ static void PM_AirMove( void ) {
   float		scale;
 
 
-  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_CROUCHJUMP ?
+  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_JUMPCROUCH ?
     PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
     PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
 
@@ -2588,7 +2705,7 @@ static void PM_WalkMove( void ) {
     return;
   }
 
-  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_CROUCHJUMP ?
+  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_JUMPCROUCH ?
   PM_CmdScale(&a.pm_ps, &a.pm.cmd) :
   PM_AltCmdScale(&a.pm_ps, &a.pm.cmd);
 

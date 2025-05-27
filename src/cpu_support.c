@@ -2,17 +2,21 @@
 #include <cpuid.h>
 #include <stdio.h>
 
-static cpu_support_info_t cpu_support_info = {0};
-
 static int cpu_supports_sse2(void);
 static int cpu_supports_sse41(void);
 static int cpu_supports_avx(void);
 
-void init_cpu_support(void)
+cpu_support_info_t get_cpu_support(void)
 {
-  cpu_support_info.sse2 = cpu_supports_sse2();
-  cpu_support_info.sse41 = cpu_supports_sse41();
-  cpu_support_info.avx = cpu_supports_avx();
+  static cpu_support_info_t cpu_support_info = {0};
+  static int init = 0;
+  if(!init){
+    cpu_support_info.sse2 = cpu_supports_sse2();
+    cpu_support_info.sse41 = cpu_supports_sse41();
+    cpu_support_info.avx = cpu_supports_avx();
+    init = 1;
+  }
+  return cpu_support_info;
 }
 
 static int cpu_supports_sse2(void)
