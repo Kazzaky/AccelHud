@@ -1,19 +1,29 @@
 #include "cg_tcvar.h"
-#include "cg_local.h"
 
 
-void init_tcvars(trackTableItem const* cvars, size_t size)
+void init_tcvars(trackTableItem *cvars, size_t size)
 {
-  for (uint32_t i = 0; i < size; ++i)
+  for (size_t i = 0; i < size; ++i)
   {
-    trap_Cvar_Register(cvars[i].vmTCvar.cvar, cvars[i].cvarName, cvars[i].defaultString, cvars[i].cvarFlags);
+    // save the last modificationCount
+    cvars[i].track = cvars[i].vmCvar->modificationCount;
+
+    // call callback
+    cvars[i].callback(&cvars[i], cvars[i].data);
   }
 }
 
-void update_tcvars(trackTableItem const* cvars, size_t size)
+void update_tcvars(trackTableItem *cvars, size_t size)
 {
-  for (uint32_t i = 0; i < size; ++i)
+  for (size_t i = 0; i < size; ++i)
   {
-    trap_Cvar_Update(cvars[i].vmTCvar.cvar);
+    // check modificationCount
+    if(cvars[i].track != cvars[i].vmCvar->modificationCount)
+    {
+      cvars[i].track = cvars[i].vmCvar->modificationCount;
+      
+      // call callback
+      cvars[i].callback(&cvars[i], cvars[i].data);
+    }
   }
 }

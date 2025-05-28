@@ -18,7 +18,7 @@ typedef struct trackTableItem_
 // since the following macro is used for special case handling, the data are mostly unused thats why the name is "_"
 #define TRACK_CALLBACK(n) void TRACK_CALLBACK_NAME(n)(trackTableItem const *item, void *_)
 
-void init_tcvars(trackTableItem const* cvars, size_t size);
-void update_tcvars(trackTableItem const* cvars, size_t size);
+void init_tcvars(trackTableItem *cvars, size_t size);
+void update_tcvars(trackTableItem *cvars, size_t size);
 
 #endif // CG_TCVAR_H

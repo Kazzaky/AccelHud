@@ -7,8 +7,8 @@
 #ifndef SIMD
   #define SIMD(fn) _mm256_##fn
 #endif
-#ifndef SIMD_POSTFIX
-  #define SIMD_POSTFIX(fn) fn##_avx
+#ifndef SIMD_SUFFIX
+  #define SIMD_SUFFIX(fn) fn##_avx
 #endif
 #ifndef SIMD_ROUND_SSE2
   #define SIMD_ROUND_SSE2 0
