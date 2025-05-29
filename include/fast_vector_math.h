@@ -1,7 +1,6 @@
 #ifndef FAST_VECTOR_MATH_H
 #define FAST_VECTOR_MATH_H
 
-#include "q_shared.h"
 #include <immintrin.h>
 
 __m128 sse2_rint_ps(__m128 x);

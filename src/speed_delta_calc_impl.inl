@@ -261,6 +261,37 @@ static inline void SIMD_SUFFIX(clip_velocity)(
   *out_v_vel_z = SIMD(sub_ps)(*v_vel_z, SIMD(mul_ps)(*v_norm_z, v_backoff));
 }
 
+// reference from which the following function was derived
+// // following function is modified version of function taken from: https://github.com/ETrun/ETrun/blob/43b9e18b8b367b2c864bcfa210415372820dd212/src/game/bg_pmove.c#L839
+// inline static void PM_Aircontrol(const vec3_t wishdir, vec3_t velocity_io) {
+//   float zspeed, speed, dot, k;
+//   int   i;
+
+//   // if (!pms.pm.cmd.rightmove || wishspeed == 0.0) {
+//   // 	return; 
+//   // }
+
+//   zspeed = velocity_io[2];
+//   velocity_io[2] = 0;
+//   speed = VectorNormalize(velocity_io);
+
+//   dot = DotProduct(velocity_io, wishdir);
+//   k = 32.0f * 150.0f * dot * dot * pm_frametime;
+
+//   if (dot > 0) {
+//     for (i = 0; i < 2; ++i) {
+//       velocity_io[i] = velocity_io[i] * speed + wishdir[i] * k;
+//     }
+//     VectorNormalize(velocity_io);
+//   }
+
+//   for (i = 0; i < 2; ++i) {
+//     velocity_io[i] *= speed;
+//   }
+//   velocity_io[2] = zspeed;
+// }
+
+
 static inline void SIMD_SUFFIX(aircontrol)(
   const SIMD_TYPE *v_wishdir_x, const SIMD_TYPE *v_wishdir_y, const SIMD_TYPE *v_wishdir_z,
   SIMD_TYPE *v_vel_io_x, SIMD_TYPE *v_vel_io_y

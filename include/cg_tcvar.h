@@ -3,7 +3,7 @@
 
 // helper to notice the cvar change
 
-#include "cg_cvar.h"
+#include "q_shared.h"
 
 typedef struct trackTableItem_
 {

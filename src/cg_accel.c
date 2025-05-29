@@ -16,6 +16,7 @@
 #include "accel_version.h"
 
 #include "bg_pmove.h"
+#include "cg_cvar.h"
 #include "cg_tcvar.h"
 #include "cg_local.h"
 #include "cg_utils.h"
@@ -33,19 +34,21 @@
 // **** colors ****
 
 #define COLOR_LIST \
-  /* (cvar variable name, default) */ \
+  /* (cvar name, default) */ \
   X(accel_rgba, ".2 .9 .2 .5") \
   X(accel_neg_rgba, ".9 .2 .2 .5") \
   X(accel_near_edge_rgba, ".7 .1 .1 .5") \
   X(accel_far_edge_rgba, ".1 .1 .7 .5") \
   X(accel_hl_rgba, ".3 1 .3 .75") \
   X(accel_hl_neg_rgba, ".9 .3 .3 .75") \
-  X(accel_p_strafe_rgbam, "-.2 -.1 .4 -.4") \
-  X(accel_p_sidemove_rgbam, ".4 -.1 -.2 -.4") \
-  X(accel_p_opposite_rgbam, ".8 .-8 .8 -.3") \
-  X(accel_p_jc_rgbam, "1 1 1 1") \
-  X(accel_window_end_rgba, ".2 .4 1 .9") \
-  X(accel_window_end_hl_rgba, ".3 .6 .9 .9")
+  X(accel_p_strafe_rgba, ".2 .1 .4 .4") \
+  X(accel_p_sm_rgba, ".4 .1 .2 .4") \
+  X(accel_p_jc_rgba, "1 1 1 1") \
+  X(accel_p_jcsm_rgba, "0 0 0 1") \
+  X(accel_p_opposite_rgba, ".8 .-8 .8 .3") \
+  X(accel_mwindow_end_rgba, ".2 .4 1 .9") \
+  X(accel_mwindow_end_hl_rgba, ".3 .6 .9 .9") \
+  X(accel_mirror_rgba, ".5 .6 .4 .9")
   // add new colors here 
 
 // color id enum
@@ -70,14 +73,6 @@ typedef struct
 
 static game_t game;
 
-typedef struct
-{
-  float total; // redundant, but convenience
-  float forward;
-  float side;
-  float up;
-} speed_delta_t;
-
 typedef struct graph_bar_
 {
   int   ix;           // x in max pixels (also works as angle)
@@ -88,18 +83,15 @@ typedef struct graph_bar_
   float angle_middle; // occupied angle within view
   float height;       // scaled
   float y;            // scaled
-  
-  // not the most elegant solution, but we got rid of ordering yay ! 
-  int   next_is_adj;
-  int   prev_is_adj; // this is not needed at all, redundant... TODO: remove
+  int   next_is_adj;  // check if we omited or skiped bar
 
   // bidirectional linked list
   struct graph_bar_ *next;
   struct graph_bar_ *prev;
 } graph_bar;
 
-#define GRAPH_MAX_RESOLUTION 3840 // 4K hardcoded, MUST BE %8==0 !  \
-// ^ technically there is no real limitation besides memory block allocation
+#define GRAPH_MAX_RESOLUTION 8192 // hardcoded, memory block allocation is limitation also
+static_assert(GRAPH_MAX_RESOLUTION % 8 == 0, "GRAPH_MAX_RESOLUTION must be evenly divisible by 8");
 
 typedef struct
 {
@@ -110,7 +102,7 @@ typedef struct
   int           graph_size;           // how much of the ^ array is currently used
 
   float         speed;
-  vec3_t        velocity;             // snapped -> solve spectator bug
+  vec3_t        velocity_s;           // snapped -> solve spectator bug
   float         vel_angle;            // velocity angle
   float         yaw_angle;            // current yaw angle
 
@@ -119,8 +111,9 @@ typedef struct
   // float         resolution_ratio_inv; // inverted
   int           resolution_center;    // resolution / 2
   float         x_angle_ratio;        // used to convert x axis size to angle (from max pixels)
+                                      // works both ways angle -> x point
   float         to_real_pixel;        // x_angle_ratio * a.resolution_ratio
-  float         to_real_pixel_inv;     // 1 / (x_angle_ratio * a.resolution_ratio)
+  float         to_real_pixel_inv;    // 1 / to_real_pixel (to convert back)
 
   // scaled means: in real pixels
   float         hud_ypos_scaled;
@@ -132,7 +125,7 @@ typedef struct
   float         vcenter_offset_scaled;
 
   float         predict_offset_scaled;
-  float         PREDICT_JUMPCROUCH_offset_scaled;
+  float         predict_jumpcrouch_offset_scaled;
 
   float         edge_size_scaled;
   float         edge_min_size_scaled;
@@ -167,10 +160,6 @@ typedef struct
   thread_pool_t thread_pool;
 
   // per frame
-  // float         wishdir_rot_x[GRAPH_MAX_RESOLUTION];
-  // float         wishdir_rot_y[GRAPH_MAX_RESOLUTION];
-  // float         vel_wishdir_rot_dot[GRAPH_MAX_RESOLUTION];
-  // float         accel_param[GRAPH_MAX_RESOLUTION];
   float         speed_delta_total[GRAPH_MAX_RESOLUTION];
   float         speed_delta_forward[GRAPH_MAX_RESOLUTION];
   float         speed_delta_side[GRAPH_MAX_RESOLUTION];
@@ -181,6 +170,18 @@ typedef struct
 
 static accel_t a;
 
+typedef struct {
+  signed char cmd_forwardmove;
+  signed char cmd_rightmove;
+  signed char cmd_upmove;
+  int         predict;          // prediction enum
+  int         mwindow_mode;     // bool
+  int         component;        // component enum
+  int         vcenter;          // bool
+  float       voffset;
+  accel_t     *use_old_a;       // mirror specific (to reuse)
+} move_data_t;
+
 // **** cvars ****
 
 static vmCvar_t accel;
@@ -190,54 +191,42 @@ static vmCvar_t accel_min_speed;
 static vmCvar_t accel_base_height;
 static vmCvar_t accel_max_height;
 static vmCvar_t accel_yh;
-static vmCvar_t accel_neg_mode;
-static vmCvar_t accel_component;
+static vmCvar_t accel_negative;
 static vmCvar_t accel_mirror;
-static vmCvar_t accel_mirror_component;
 
-static vmCvar_t accel_mirror_offset;
-static vmCvar_t accel_neg_offset;
-static vmCvar_t accel_vcenter_offset;
-static vmCvar_t accel_p_offset;
-static vmCvar_t accel_p_jc_offset;
+static vmCvar_t accel_p_strafe;
+static vmCvar_t accel_p_sm;
+static vmCvar_t accel_p_jc;
+
+static vmCvar_t accel_component;
+static vmCvar_t accel_mirror_component;
+static vmCvar_t accel_p_strafe_component;
+static vmCvar_t accel_p_sm_component;
+static vmCvar_t accel_p_jc_component;
+
+static vmCvar_t accel_vcenter;
+static vmCvar_t accel_edge_vcenter;
+static vmCvar_t accel_mwindow_end_vcenter;
+static vmCvar_t accel_p_strafe_vcenter;
+static vmCvar_t accel_p_sm_vcenter;
+static vmCvar_t accel_p_jc_vcenter;
+
+static vmCvar_t accel_mirror_voffset;
+static vmCvar_t accel_negative_voffset;
+static vmCvar_t accel_vcenter_voffset;
+static vmCvar_t accel_p_strafe_voffset;
+static vmCvar_t accel_p_sm_voffset;
+static vmCvar_t accel_p_jc_voffset;
+static vmCvar_t accel_p_opposite_voffset;
 
 static vmCvar_t accel_p_jc_overdraw;
 
 static vmCvar_t accel_show_move;
 static vmCvar_t accel_show_move_vq3;
 
-#define PREDICTION_BIN_LIST \
-  X(accel_p_strafe_w_sm) \
-  X(accel_p_strafe_w_fm) \
-  X(accel_p_strafe_w_nk) \
-  X(accel_p_strafe_w_strafe) \
-  X(accel_p_jc_w_strafe) \
-  X(accel_p_strafe_w_sm_vq3) \
-  X(accel_p_strafe_w_fm_vq3) \
-  X(accel_p_strafe_w_nk_vq3) \
-  X(accel_p_strafe_w_strafe_vq3) \
-  X(accel_p_jc_w_strafe_vq3) \
-  X(accel_p_jc_w_sm_vq3) \
-  X(accel_p_sm_w_sm_vq3) \
-  X(accel_p_sm_w_strafe_vq3) \
-  X(accel_p_sm_w_fm_vq3) \
-  X(accel_p_sm_w_nk_vq3)
-
-// prediction cvars
-#define X(n) static vmCvar_t n;
-PREDICTION_BIN_LIST
-#undef X
-
-static vmCvar_t accel_p_strafe_component;
-static vmCvar_t accel_p_sm_component;
-static vmCvar_t accel_p_jc_component;
-
-// static vmCvar_t accel_threshold; // -0.38 was the biggest seen plasma climb
-
 static vmCvar_t accel_merge_threshold; // width threshold not delta !
 static vmCvar_t accel_window_grow_threshold;
 static vmCvar_t accel_window_grow_limit;
-
 
 static vmCvar_t accel_edge;
 static vmCvar_t accel_edge_size;
@@ -246,21 +235,49 @@ static vmCvar_t accel_edge_height;
 static vmCvar_t accel_edge_min_height;
 static vmCvar_t accel_edge_voffset;
 
-static vmCvar_t accel_window_end;
-static vmCvar_t accel_window_end_size;
-static vmCvar_t accel_window_end_min_size;
-static vmCvar_t accel_window_end_height;
-static vmCvar_t accel_window_end_min_height;
-static vmCvar_t accel_window_end_voffset;
+static vmCvar_t accel_mwindow_end;
+static vmCvar_t accel_mwindow_end_size;
+static vmCvar_t accel_mwindow_end_min_size;
+static vmCvar_t accel_mwindow_end_height;
+static vmCvar_t accel_mwindow_end_min_height;
+static vmCvar_t accel_mwindow_end_voffset;
 
-#if ACCEL_DEBUG
-  static vmCvar_t accel_verbose;
-#endif // ACCEL_DEBUG
+#define PREDICTION_BY_MOVE_LIST \
+  X(accel_p_strafe_w_sm) \
+  X(accel_p_strafe_w_fm) \
+  X(accel_p_strafe_w_nk) \
+  X(accel_p_strafe_w_strafe) \
+  X(accel_p_jc_w_strafe) \
+  X(accel_p_jc_w_fm) \
+  X(accel_p_strafe_w_sm_vq3) \
+  X(accel_p_strafe_w_fm_vq3) \
+  X(accel_p_strafe_w_nk_vq3) \
+  X(accel_p_strafe_w_strafe_vq3) \
+  X(accel_p_jc_w_strafe_vq3) \
+  X(accel_p_jcsm_w_strafe_vq3) \
+  X(accel_p_jc_w_sm_vq3) \
+  X(accel_p_jcstrafe_w_sm_vq3) \
+  X(accel_p_sm_w_sm_vq3) \
+  X(accel_p_sm_w_strafe_vq3) \
+  X(accel_p_sm_w_fm_vq3) \
+  X(accel_p_sm_w_nk_vq3)
+
+// accel_p_jc_w_fm_vq3 doesn't make sense, the forward move is not useful there, 
+// also there are two option strafe and sidemove, how to decide ?...
+
+// prediction cvars
+#define X(n) static vmCvar_t n;
+PREDICTION_BY_MOVE_LIST
+#undef X
 
 // color cvars
 #define X(n,d) static vmCvar_t n;
 COLOR_LIST
 #undef X
+
+#if ACCEL_DEBUG
+  static vmCvar_t accel_verbose;
+#endif // ACCEL_DEBUG
 
 
 // **** cvar tables ****
@@ -269,14 +286,12 @@ COLOR_LIST
 #define CVAR_EXPAND_NAME(n) n, "p_" #n
 
 static cvarTable_t accel_cvars[] = {
-  { &CVAR_EXPAND_NAME(accel), "0b000000", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel), "0b0000", CVAR_ARCHIVE_ND },
   // #define ACCEL_DISABLED            0
   #define ACCEL_ENABLE              1 // the basic view
   #define ACCEL_HL_ACTIVE           (1 << 1) // highlight active
   #define ACCEL_UNIFORM_VALUE       (1 << 2) // uniform values
-  #define ACCEL_WINDOW              (1 << 3) // draw only window bar
-  #define ACCEL_NEG_UP              (1 << 4) // negatives grow up (not down as default)
-  #define ACCEL_VCENTER             (1 << 5) // apply vertical bar centering
+  #define ACCEL_MWINDOW             (1 << 3) // draw only window bar
 
   // ^ old features were completely removed
   // can be found at github tag v0.3.1
@@ -293,18 +308,24 @@ static cvarTable_t accel_cvars[] = {
   { &CVAR_EXPAND_NAME(accel_base_height), "0", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_max_height), "50", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_yh), "180 30", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_neg_mode), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_negative), "0b000", CVAR_ARCHIVE_ND },
   //#define ACCEL_NEG_MODE          0 // negative disabled
-  #define ACCEL_NEG_MODE_ENABLED    1 // negative enabled
-  #define ACCEL_NEG_MODE_ADJECENT   (1 << 1) // only adjecent negative are shown
+  #define ACCEL_NEGATIVE_ENABLED    1 // negative enabled
+  #define ACCEL_NEGATIVE_ADJECENT   (1 << 1) // only adjecent negative are shown
+  #define ACCEL_NEGATIVE_UP         (1 << 2) // negatives grow up (not down as default)
+  
+  { &CVAR_EXPAND_NAME(accel_mirror), "0", CVAR_ARCHIVE_ND },
+  //#define ACCEL_MIRROR_DISABLED     0 // mirror disabled
+  #define ACCEL_MIRROR_ENABLED        1 // mirror enabled
+  // stacking on top of regular graph won't be implemented (don't believe someone would use it)
 
-  { &CVAR_EXPAND_NAME(accel_neg_offset), "15", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_vcenter_offset), "15", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_p_offset), "30", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_p_jc_offset), "0", CVAR_ARCHIVE_ND },
-
-  { &CVAR_EXPAND_NAME(accel_p_jc_overdraw), "0", CVAR_ARCHIVE_ND },
-
+  { &CVAR_EXPAND_NAME(accel_p_strafe), "0b000", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_sm), "0b000", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_jc), "0b000", CVAR_ARCHIVE_ND },
+  #define ACCEL_PREDICT               1
+  #define ACCEL_PREDICT_MWINDOW       (1 << 1) // only main window
+  #define ACCEL_PREDICT_UNIFORM_VALUE (1 << 2) // uniform values
+  
   { &CVAR_EXPAND_NAME(accel_component), "0", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_mirror_component), "0", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_p_strafe_component), "0", CVAR_ARCHIVE_ND },
@@ -316,9 +337,26 @@ static cvarTable_t accel_cvars[] = {
   #define ACCEL_COMPONENT_SIDE    3
   #define ACCEL_COMPONENT_UP      4
 
-  #define X(n,d) { &CVAR_EXPAND_NAME(n), d, CVAR_ARCHIVE_ND },
-  COLOR_LIST
-  #undef X
+  { &CVAR_EXPAND_NAME(accel_vcenter), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_edge_vcenter), "2", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_mwindow_end_vcenter), "2", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_strafe_vcenter), "2", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_sm_vcenter), "2", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_jc_vcenter), "2", CVAR_ARCHIVE_ND },
+    // #define ACCEL_VCENTER_DISABLED 0   // disabled no matter what
+  #define ACCEL_VCENTER_ENABLED  1        // enabled no matter what
+  #define ACCEL_VCENTER_GENERAL  2        // use accel general vcenter setting (accel_vcenter do not have this option)
+
+
+  { &CVAR_EXPAND_NAME(accel_mirror_voffset), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_negative_voffset), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_vcenter_voffset), "15", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_strafe_voffset), "30", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_sm_voffset), "30", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_jc_voffset), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_p_opposite_voffset), "0", CVAR_ARCHIVE_ND },
+
+  { &CVAR_EXPAND_NAME(accel_p_jc_overdraw), "0", CVAR_ARCHIVE_ND },
 
   // enable regular accel graph while holding specific keys
   { &CVAR_EXPAND_NAME(accel_show_move), "0b1101", CVAR_ARCHIVE_ND },
@@ -328,24 +366,15 @@ static cvarTable_t accel_cvars[] = {
   #define ACCEL_MOVE_FORWARD        (1 << 2)
   #define ACCEL_MOVE_SIDE_GROUNDED  (1 << 3)
 
-  #define X(n) { &CVAR_EXPAND_NAME(n), "0b00", CVAR_ARCHIVE_ND },
-  PREDICTION_BIN_LIST
-  #undef X
-  #define ACCEL_PREDICT_MOVE          1
-  #define ACCEL_PREDICT_MOVE_WINDOW   (1 << 1)
-
   { &CVAR_EXPAND_NAME(accel_merge_threshold), "2", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_window_grow_threshold), ".0327", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_window_grow_limit), "1", CVAR_ARCHIVE_ND },
 
-
-  { &CVAR_EXPAND_NAME(accel_edge), "0b000000", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_edge), "0b0000", CVAR_ARCHIVE_ND },
   //#define ACCEL_EDGE_ENABLE 1
   #define ACCEL_EDGE_FULL_SIZE        (1 << 1) // extend to negative (double size + gap)
   #define ACCEL_EDGE_RELATIVE_SIZE    (1 << 2) // making p_accel_edge_size percentage of bar width
   #define ACCEL_EDGE_RELATIVE_HEIGHT  (1 << 3) // making p_accel_edge_height percentage of bar height
-  #define ACCEL_EDGE_VCENTER_FORCE    (1 << 4) // forced vcentering
-  #define ACCEL_EDGE_VCENTER          (1 << 5) // override regular accel graph vcentering
 
   { &CVAR_EXPAND_NAME(accel_edge_size), "1", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_edge_min_size), "2", CVAR_ARCHIVE_ND },
@@ -353,19 +382,25 @@ static cvarTable_t accel_cvars[] = {
   { &CVAR_EXPAND_NAME(accel_edge_min_height), "-1", CVAR_ARCHIVE_ND },
   { &CVAR_EXPAND_NAME(accel_edge_voffset), "0", CVAR_ARCHIVE_ND },
 
-  { &CVAR_EXPAND_NAME(accel_window_end), "0b0000000", CVAR_ARCHIVE_ND },
-  #define ACCEL_WINDOW_END_HL              (1 << 1)   // highlight
-  #define ACCEL_WINDOW_END_RELATIVE_SIZE   (1 << 2)   // making p_accel_window_end_size percentage of bar width
-  #define ACCEL_WINDOW_END_RELATIVE_HEIGHT (1 << 3)   // making p_accel_window_end_height percentage of bar height
-  #define ACCEL_WINDOW_END_SUBTRACT        (1 << 4)  // cutoff the "covered" area of window zone
-  #define ACCEL_WINDOW_END_VCENTER_FORCE   (1 << 5)  // forced vcentering
-  #define ACCEL_WINDOW_END_VCENTER         (1 << 6)  // override regular accel graph vcentering
+  { &CVAR_EXPAND_NAME(accel_mwindow_end), "0b00000", CVAR_ARCHIVE_ND },
+  #define ACCEL_MWINDOW_END_HL              (1 << 1)   // highlight
+  #define ACCEL_MWINDOW_END_RELATIVE_SIZE   (1 << 2)   // making p_accel_mwindow_end_size percentage of bar width
+  #define ACCEL_MWINDOW_END_RELATIVE_HEIGHT (1 << 3)   // making p_accel_mwindow_end_height percentage of bar height
+  #define ACCEL_MWINDOW_END_SUBTRACT        (1 << 4)  // cutoff the "covered" area of window zone
 
-  { &CVAR_EXPAND_NAME(accel_window_end_size), "10", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_window_end_min_size), "10", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_window_end_height), "-1", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_window_end_min_height), "-1", CVAR_ARCHIVE_ND },
-  { &CVAR_EXPAND_NAME(accel_window_end_voffset), "0", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_mwindow_end_size), "10", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_mwindow_end_min_size), "10", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_mwindow_end_height), "-1", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_mwindow_end_min_height), "-1", CVAR_ARCHIVE_ND },
+  { &CVAR_EXPAND_NAME(accel_mwindow_end_voffset), "0", CVAR_ARCHIVE_ND },
+
+  #define X(n) { &CVAR_EXPAND_NAME(n), "0", CVAR_ARCHIVE_ND },
+  PREDICTION_BY_MOVE_LIST
+  #undef X
+
+  #define X(n,d) { &CVAR_EXPAND_NAME(n), d, CVAR_ARCHIVE_ND },
+  COLOR_LIST
+  #undef X
 
   #if ACCEL_DEBUG
     { &CVAR_EXPAND_NAME(accel_verbose), "0", CVAR_ARCHIVE_ND },
@@ -393,16 +428,17 @@ static void _tcb_vec4(trackTableItem const *item, void *data){
   X(accel) \
   X(mdd_projection) \
   X(accel_edge) \
-  X(accel_window_end)
+  X(accel_mwindow_end)
 
 // binary parsing or vector parsing is good enough reason to track
 #define TRACK_LIST_BINARY \
   X(accel_trueness) \
-  \
+  X(accel_negative) \
+  X(accel_p_strafe) \
+  X(accel_p_sm) \
+  X(accel_p_jc) \
   X(accel_show_move) \
-  X(accel_show_move_vq3) \
-  \
-  PREDICTION_BIN_LIST
+  X(accel_show_move_vq3)
 
 #define TRACK_LIST_VEC2 \
   X(accel_yh, &a.yh)
@@ -457,6 +493,7 @@ enum {
   PREDICT_SM_STRAFE_ADD, // lets keep this for now
   PREDICT_OPPOSITE,
   PREDICT_JUMPCROUCH,
+  PREDICT_JUMPCROUCH_SM,
   PREDICT_MIRROR // mirror is internally threaded like prediction
 };
 
@@ -526,8 +563,8 @@ static void a_init(void)
   a.hud_ypos_scaled = a.yh[0] * cgs.screenXScale;
   a.hud_height_scaled = a.yh[1] * cgs.screenXScale;
 
-  a.predict_offset_scaled = accel_p_offset.value * cgs.screenXScale;
-  a.PREDICT_JUMPCROUCH_offset_scaled = accel_p_jc_offset.value * cgs.screenXScale;
+  a.predict_offset_scaled = accel_p_jc_voffset.value * cgs.screenXScale;
+  a.predict_jumpcrouch_offset_scaled = accel_p_jc_voffset.value * cgs.screenXScale;
 
   a.edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
   a.edge_min_size_scaled = accel_edge_min_size.value * cgs.screenXScale;
@@ -535,15 +572,15 @@ static void a_init(void)
   a.edge_min_height_scaled = accel_edge_min_height.value * cgs.screenXScale;
   a.edge_voffset_scaled = accel_edge_voffset.value * cgs.screenXScale;
 
-  a.window_end_size_scaled = accel_window_end_size.value * cgs.screenXScale;
-  a.window_end_min_size_scaled = accel_window_end_min_size.value * cgs.screenXScale;
-  a.window_end_height_scaled = accel_window_end_height.value * cgs.screenXScale;
-  a.window_end_min_height_scaled = accel_window_end_min_height.value * cgs.screenXScale;
-  a.window_end_voffset_scaled = accel_window_end_voffset.value * cgs.screenXScale;
+  a.window_end_size_scaled = accel_mwindow_end_size.value * cgs.screenXScale;
+  a.window_end_min_size_scaled = accel_mwindow_end_min_size.value * cgs.screenXScale;
+  a.window_end_height_scaled = accel_mwindow_end_height.value * cgs.screenXScale;
+  a.window_end_min_height_scaled = accel_mwindow_end_min_height.value * cgs.screenXScale;
+  a.window_end_voffset_scaled = accel_mwindow_end_voffset.value * cgs.screenXScale;
   a.base_height_scaled = accel_base_height.value * cgs.screenXScale;
   a.max_height_scaled = accel_max_height.value * cgs.screenXScale;
-  a.neg_offset_scaled = accel_neg_offset.value * cgs.screenXScale;
-  a.vcenter_offset_scaled = accel_vcenter_offset.value * cgs.screenXScale;
+  a.neg_offset_scaled = accel_negative_voffset.value * cgs.screenXScale;
+  a.vcenter_offset_scaled = accel_vcenter_voffset.value * cgs.screenXScale;
 }
 
 static void update_static(void)
@@ -595,8 +632,8 @@ static void update_static(void)
     a.hud_ypos_scaled = a.yh[0] * cgs.screenXScale;
     a.hud_height_scaled = a.yh[1] * cgs.screenXScale;
 
-    a.predict_offset_scaled = accel_p_offset.value * cgs.screenXScale;
-    a.PREDICT_JUMPCROUCH_offset_scaled = accel_p_jc_offset.value * cgs.screenXScale;
+    a.predict_offset_scaled = accel_p_jc_voffset.value * cgs.screenXScale;
+    a.predict_jumpcrouch_offset_scaled = accel_p_jc_voffset.value * cgs.screenXScale;
 
     a.edge_size_scaled = accel_edge_size.value * cgs.screenXScale;
     a.edge_min_size_scaled = accel_edge_min_size.value * cgs.screenXScale;
@@ -604,15 +641,15 @@ static void update_static(void)
     a.edge_min_height_scaled = accel_edge_min_height.value * cgs.screenXScale;
     a.edge_voffset_scaled = accel_edge_voffset.value * cgs.screenXScale;
 
-    a.window_end_size_scaled = accel_window_end_size.value * cgs.screenXScale;
-    a.window_end_min_size_scaled = accel_window_end_min_size.value * cgs.screenXScale;
-    a.window_end_height_scaled = accel_window_end_height.value * cgs.screenXScale;
-    a.window_end_min_height_scaled = accel_window_end_min_height.value * cgs.screenXScale;
-    a.window_end_voffset_scaled = accel_window_end_voffset.value * cgs.screenXScale;
+    a.window_end_size_scaled = accel_mwindow_end_size.value * cgs.screenXScale;
+    a.window_end_min_size_scaled = accel_mwindow_end_min_size.value * cgs.screenXScale;
+    a.window_end_height_scaled = accel_mwindow_end_height.value * cgs.screenXScale;
+    a.window_end_min_height_scaled = accel_mwindow_end_min_height.value * cgs.screenXScale;
+    a.window_end_voffset_scaled = accel_mwindow_end_voffset.value * cgs.screenXScale;
     a.base_height_scaled = accel_base_height.value * cgs.screenXScale;
     a.max_height_scaled = accel_max_height.value * cgs.screenXScale;
-    a.neg_offset_scaled = accel_neg_offset.value * cgs.screenXScale;
-    a.vcenter_offset_scaled = accel_vcenter_offset.value * cgs.screenXScale;
+    a.neg_offset_scaled = accel_negative_voffset.value * cgs.screenXScale;
+    a.vcenter_offset_scaled = accel_vcenter_voffset.value * cgs.screenXScale;
   }
 }
 
@@ -697,7 +734,7 @@ static TRACK_CALLBACK(accel)
 
   // these itself can be used for tracking changes
   if(tmp != vertical_center){
-    TRACK_CALLBACK_NAME(accel_window_end)(&accel_track_cvars[TRACK_ID(accel_window_end)], NULL);
+    TRACK_CALLBACK_NAME(accel_mwindow_end)(&accel_track_cvars[TRACK_ID(accel_mwindow_end)], NULL);
     TRACK_CALLBACK_NAME(accel_edge)(&accel_track_cvars[TRACK_ID(accel_edge)], NULL);
   }
 }
@@ -738,8 +775,8 @@ static TRACK_CALLBACK(accel_window_end)
   item->vmCvar->integer = cvar_getInteger(item->name);
 
   // update all related function pointers
-  if(((item->vmCvar->integer & ACCEL_WINDOW_END_VCENTER_FORCE) && (item->vmCvar->integer & ACCEL_WINDOW_END_VCENTER))
-    || (!(item->vmCvar->integer & ACCEL_WINDOW_END_VCENTER_FORCE) && (accel.integer & ACCEL_VCENTER))
+  if(((item->vmCvar->integer & ACCEL_MWINDOW_END_VCENTER_FORCE) && (item->vmCvar->integer & ACCEL_MWINDOW_END_VCENTER))
+    || (!(item->vmCvar->integer & ACCEL_MWINDOW_END_VCENTER_FORCE) && (accel.integer & ACCEL_VCENTER))
   ){
     draw_positive_window_end = draw_positive;
   }
@@ -751,8 +788,8 @@ static TRACK_CALLBACK(accel_window_end)
 
 inline static void PmoveSingle(void);
 inline static void PmoveSingle_update(void);
-inline static void PM_WalkMove(int predict, int window);
-inline static void PM_AirMove(int predict, int window);
+inline static void PM_WalkMove(const move_data_t *move_data);
+inline static void PM_AirMove(const move_data_t *move_data);
 
 void (*calc_speed_delta_walk_worker)(int, int, void*);
 void (*calc_speed_delta_air_vq3_worker)(int, int, void*);
@@ -872,17 +909,17 @@ void draw_accel(void)
   // TODO: put drawing here
 }
 
-inline static void move(int predict, int window)
+inline static void move(const move_data_t *move_data)
 {
   if (game.pml.walking)
   {
     // walking on ground
-    PM_WalkMove(predict, window);
+    PM_WalkMove(move_data);
   }
   else
   {
     // airborne
-    PM_AirMove(predict, window);
+    PM_AirMove(move_data);
   }
 }
 
@@ -890,6 +927,7 @@ inline static void PmoveSingle_update(void)
 {
   // scale is full move, the cmd moves could be partials,
   // particals cause flickering -> p_flickfree force full moves
+  // by hooking trap_GetUserCmd
   game.move_scale = game.pm_ps.stats[13] & PSF_USERINPUT_WALK ? 64 : 127;
   if (!cg.demoPlayback && !(game.pm_ps.pm_flags & PMF_FOLLOW))
   {
@@ -954,8 +992,8 @@ inline static void PmoveSingle_update(void)
   a.vel_angle = atan2f(game.pm_ps.velocity[1], game.pm_ps.velocity[0]);
   a.yaw_angle = DEG2RAD(game.pm_ps.viewangles[YAW]);
 
-  VectorCopy(game.pm_ps.velocity, a.velocity);
-  Sys_SnapVector(a.velocity); // solves bug in spectator mode
+  VectorCopy(game.pm_ps.velocity, a.velocity_s);
+  Sys_SnapVector(a.velocity_s); // solves bug in spectator mode
 }
 
 inline static void PmoveSingle(void)
@@ -964,173 +1002,240 @@ inline static void PmoveSingle(void)
     return;
   }
 
-  // drawing gonna happend
+  // drawing gonna happen
 
-  int predict = 0;
-  int predict_window = 0;
+  // ***** predictions *****
 
-  // save original keys
-  signed char key_forwardmove = game.pm.cmd.forwardmove,
-      key_rightmove = game.pm.cmd.rightmove,
-      key_upmove = game.pm.cmd.upmove;
+  // if we have partial move, adjust scale
+  const signed char abs_forwardmove = abs(game.pm.cmd.forwardmove);
+  const signed char abs_sidemove = abs(game.pm.cmd.rightmove);
+  const signed char abs_upmove = abs(game.pm.cmd.upmove);
+  // max of these ^
+  // we are mimicking the prediction key at the same time as max key was pressed
+  signed char related_scale = abs_forwardmove > abs_sidemove ?
+    (abs_upmove > abs_forwardmove ? abs_upmove : abs_forwardmove)
+    : (abs_upmove > abs_sidemove ? abs_upmove : abs_sidemove);
 
-  // * predictions *
-
-  int fm_case;
-
-  // cpm
-  if(game.pm_ps.pm_flags & PMF_PROMODE)
-  {
-    if(accel_p_strafe_w_sm.integer && !key_forwardmove && key_rightmove){
-      // strafe predict
-      game.pm.cmd.forwardmove = game.move_scale;
-      game.pm.cmd.rightmove   = key_rightmove;
-      predict = PREDICT_SM_STRAFE;
-      predict_window = accel_p_strafe_w_sm.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      move(predict, predict_window);
-      // opposite side
-      game.pm.cmd.rightmove *= -1;
-      move(predict, predict_window);
-    }
-
-    fm_case = accel_p_strafe_w_fm.integer & ACCEL_PREDICT_MOVE && key_forwardmove && !key_rightmove;
-    if(fm_case || (accel_p_strafe_w_nk.integer && !key_forwardmove && !key_rightmove)){
-      // strafe predict
-      game.pm.cmd.forwardmove = game.move_scale;
-      game.pm.cmd.rightmove   = game.move_scale;
-      predict = PREDICT_FMNK_STRAFE;
-      predict_window = fm_case ? accel_p_strafe_w_fm.integer & ACCEL_PREDICT_MOVE_WINDOW : accel_p_strafe_w_nk.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      move(predict, predict_window);
-      // opposite side
-      game.pm.cmd.rightmove *= -1;
-      move(predict, predict_window);
-      // return; // no longer in use as we have show_move
-    }
-
-    // predict same move just opposite side
-    if(accel_p_strafe_w_strafe.integer && key_forwardmove && key_rightmove)
-    {
-      predict_window = accel_p_strafe_w_strafe.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      predict = PREDICT_OPPOSITE;
-      game.pm.cmd.forwardmove = key_forwardmove;
-      game.pm.cmd.rightmove = key_rightmove * -1;
-      move(predict, predict_window);
-    }
+  if(!related_scale){
+    // in case it was partial we don't know how much
+    // because there is no move
+    related_scale = game.move_scale;
   }
-  else // vq3
+  // in case of full moves the game.move_scale should be the same
+  // as game.pm.cmd.forwardmove or game.pm.cmd.rightmove
+
+  const int orig_move_is_strafe = game.pm.cmd.forwardmove && game.pm.cmd.rightmove;
+  const int orig_move_is_sm = !game.pm.cmd.forwardmove && game.pm.cmd.rightmove;
+  const int orig_move_is_fm = game.pm.cmd.forwardmove && !game.pm.cmd.rightmove;
+  const int orig_move_is_nk = !game.pm.cmd.forwardmove && !game.pm.cmd.rightmove;
+
+  if(accel_p_strafe.integer)
   {
-    if(accel_p_strafe_w_sm_vq3.integer && !key_forwardmove && key_rightmove){
-      // strafe predict
-      game.pm.cmd.forwardmove = game.move_scale;
-      game.pm.cmd.rightmove   = key_rightmove;
-      predict = PREDICT_SM_STRAFE_ADD;
-      predict_window = accel_p_strafe_w_sm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      move(predict, predict_window);
-      // opposite side
-      game.pm.cmd.rightmove *= -1;
-      move(predict, predict_window);
-    }
+    // pre-set
+    move_data_t strafe_move_data = {0};
+    strafe_move_data.cmd_upmove = game.pm.cmd.upmove; // same
+    strafe_move_data.mwindow_mode = accel_p_strafe.integer & ACCEL_PREDICT_MWINDOW;
+    strafe_move_data.component = accel_p_strafe_component.integer;
+    strafe_move_data.vcenter = accel_p_strafe_vcenter.integer == ACCEL_VCENTER_GENERAL ?
+      accel_vcenter.integer : accel_p_strafe_vcenter.integer;
+    strafe_move_data.voffset = accel_p_strafe_voffset.value;
 
-    fm_case = accel_p_strafe_w_fm_vq3.integer & ACCEL_PREDICT_MOVE && key_forwardmove && !key_rightmove;
-    if(fm_case || (accel_p_strafe_w_nk_vq3.integer && !key_forwardmove && !key_rightmove)){
-      // strafe predict
-      game.pm.cmd.forwardmove = game.move_scale;
-      game.pm.cmd.rightmove   = game.move_scale;
-      predict = PREDICT_FMNK_STRAFE;
-      predict_window = fm_case ? accel_p_strafe_w_fm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW : accel_p_strafe_w_nk_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      move(predict, predict_window);
-      // opposite side
-      game.pm.cmd.rightmove *= -1;
-      move(predict, predict_window);
-    }
-
-    fm_case = accel_p_sm_w_fm_vq3.integer & ACCEL_PREDICT_MOVE && key_forwardmove && !key_rightmove;
-    if(fm_case || (accel_p_sm_w_nk_vq3.integer && !key_forwardmove && !key_rightmove)){
-      // sidemove predict
-      predict_window = fm_case ? accel_p_sm_w_fm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW : accel_p_sm_w_nk_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      predict = PREDICT_FMNK_SM;
-      game.pm.cmd.forwardmove = 0;
-      game.pm.cmd.rightmove   = game.move_scale;
-      move(predict, predict_window);
-      // opposite side
-      game.pm.cmd.rightmove *= -1;
-      move(predict, predict_window);
-    }
-
-    // predict same move just opposite side
-    if(accel_p_strafe_w_strafe_vq3.integer && key_forwardmove && key_rightmove)
-    {
-      predict_window = accel_p_strafe_w_strafe_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      predict = PREDICT_OPPOSITE;
-      game.pm.cmd.forwardmove = key_forwardmove;
-      game.pm.cmd.rightmove = key_rightmove * -1;
-      move(predict, predict_window);
-    }
-
-    // predict same move just opposite side
-    if(accel_p_sm_w_sm_vq3.integer && !key_forwardmove && key_rightmove)
-    {
-      predict_window = accel_p_sm_w_sm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      // a/d oposite only for vq3
-      predict = PREDICT_OPPOSITE;
-      game.pm.cmd.forwardmove = 0;
-      game.pm.cmd.rightmove = key_rightmove * -1;
-      move(predict, predict_window);
-    }
-
-    if(accel_p_sm_w_strafe_vq3.integer && key_forwardmove && key_rightmove){
-      // the sidemove predict
-      game.pm.cmd.forwardmove = 0;
-      game.pm.cmd.rightmove   = key_rightmove;
-      predict = PREDICT_STRAFE_SM;
-      predict_window = accel_p_sm_w_strafe_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-      move(predict, predict_window);
-      // opposite side
-      game.pm.cmd.rightmove *= -1;
-      move(predict, predict_window);
-    }
-  }
-
-  // crouchjump
-  if(!accel_p_jc_overdraw.value){
-    LABEL_JC_OVERDRAW: 
     // cpm
     if(game.pm_ps.pm_flags & PMF_PROMODE)
     {
-      // predict same move while jumping / crouching 
-      if(accel_p_jc_w_strafe.integer && key_forwardmove && key_rightmove)
+      if(accel_p_strafe_w_sm.integer && orig_move_is_sm){
+        // strafe predict
+        strafe_move_data.cmd_forwardmove = related_scale;
+        strafe_move_data.cmd_rightmove = game.pm.cmd.rightmove;
+        strafe_move_data.predict = PREDICT_SM_STRAFE;
+        move(&strafe_move_data);
+        // opposite side
+        strafe_move_data.cmd_rightmove *= -1;
+        move(&strafe_move_data);
+      }
+
+      if(
+        (accel_p_strafe_w_fm.integer & ACCEL_PREDICT && orig_move_is_fm)
+        || (accel_p_strafe_w_nk.integer && orig_move_is_nk)
+      ){
+        // strafe predict
+        strafe_move_data.cmd_forwardmove = related_scale;
+        strafe_move_data.cmd_rightmove = related_scale;
+        strafe_move_data.predict = PREDICT_FMNK_STRAFE;
+        move(&strafe_move_data);
+        // opposite side
+        strafe_move_data.cmd_rightmove *= -1;
+        move(&strafe_move_data);
+      }
+
+      // predict same move just opposite side
+      if(accel_p_strafe_w_strafe.integer && orig_move_is_strafe)
       {
-        predict_window = accel_p_jc_w_strafe.integer & ACCEL_PREDICT_MOVE_WINDOW;
-        predict = PREDICT_JUMPCROUCH;
-        game.pm.cmd.forwardmove = key_forwardmove;
-        game.pm.cmd.rightmove = key_rightmove;
-        game.pm.cmd.upmove = game.move_scale;
-        move(predict, predict_window);
+        // predict strafe
+        strafe_move_data.cmd_forwardmove = game.pm.cmd.forwardmove;
+        strafe_move_data.cmd_rightmove = game.pm.cmd.rightmove * -1;
+        strafe_move_data.predict = PREDICT_OPPOSITE;
+        move(&strafe_move_data);
       }
     }
     else // vq3
     {
-      // predict same move while jumping / crouching // following block is doubled with different accel_crouchjump_overdraw after regular move
-      if(accel_p_jc_w_strafe_vq3.integer && key_forwardmove && key_rightmove)
-      {
-        predict_window = accel_p_jc_w_strafe_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-        predict = PREDICT_JUMPCROUCH;
-        game.pm.cmd.forwardmove = key_forwardmove;
-        game.pm.cmd.rightmove = key_rightmove;
-        game.pm.cmd.upmove = game.move_scale;
-        move(predict, predict_window);
+      if(accel_p_strafe_w_sm_vq3.integer && orig_move_is_sm){
+        // strafe predict
+        strafe_move_data.cmd_forwardmove = related_scale;
+        strafe_move_data.cmd_rightmove = game.pm.cmd.rightmove;
+        strafe_move_data.predict = PREDICT_SM_STRAFE_ADD;
+        move(&strafe_move_data);
+        // opposite side
+        strafe_move_data.cmd_rightmove *= -1;
+        move(&strafe_move_data);
       }
 
-      // predict same move while jumping / crouching // following block is doubled with different accel_crouchjump_overdraw after regular move
-      if(accel_p_jc_w_sm_vq3.integer && !key_forwardmove && key_rightmove)
+      if(
+        (accel_p_strafe_w_fm_vq3.integer & ACCEL_PREDICT && orig_move_is_fm)
+        || (accel_p_strafe_w_nk_vq3.integer && orig_move_is_nk)
+      ){
+        // strafe predict
+        strafe_move_data.cmd_forwardmove = related_scale;
+        strafe_move_data.cmd_rightmove = related_scale;
+        strafe_move_data.predict = PREDICT_FMNK_STRAFE;
+        move(&strafe_move_data);
+        // opposite side
+        strafe_move_data.cmd_rightmove *= -1;
+        move(&strafe_move_data);
+      }
+
+      // predict same move just opposite side
+      if(accel_p_strafe_w_strafe_vq3.integer && orig_move_is_strafe)
       {
-        predict_window = accel_p_jc_w_sm_vq3.integer & ACCEL_PREDICT_MOVE_WINDOW;
-        // a/d only for vq3
-        predict = PREDICT_JUMPCROUCH;
-        game.pm.cmd.forwardmove = key_forwardmove;
-        game.pm.cmd.rightmove = key_rightmove;
-        game.pm.cmd.upmove = game.move_scale;
-        move(predict, predict_window);
+        // strafe predict
+        strafe_move_data.cmd_forwardmove = game.pm.cmd.forwardmove;
+        strafe_move_data.cmd_rightmove = game.pm.cmd.rightmove * -1;
+        strafe_move_data.predict = PREDICT_OPPOSITE;
+        move(&strafe_move_data);
+      }
+    }
+  }
+
+  if(accel_p_sm.integer && !(game.pm_ps.pm_flags & PMF_PROMODE))
+  {
+    move_data_t sm_move_data = {0};
+    sm_move_data.cmd_upmove = game.pm.cmd.upmove; // same
+    sm_move_data.mwindow_mode = accel_p_sm.integer & ACCEL_PREDICT_MWINDOW;
+    sm_move_data.component = accel_p_sm_component.integer;
+    sm_move_data.vcenter = accel_p_sm_vcenter.integer == ACCEL_VCENTER_GENERAL ?
+      accel_vcenter.integer : accel_p_sm_vcenter.integer;
+    sm_move_data.voffset = accel_p_sm_voffset.value;
+
+    if(
+      (accel_p_sm_w_fm_vq3.integer & ACCEL_PREDICT && orig_move_is_fm)
+      || (accel_p_sm_w_nk_vq3.integer && orig_move_is_nk)
+    ){
+      // sidemove predict
+      sm_move_data.cmd_forwardmove = 0;
+      sm_move_data.cmd_rightmove = related_scale;
+      sm_move_data.predict = PREDICT_FMNK_SM;
+      move(&sm_move_data);
+      // opposite side
+      sm_move_data.cmd_rightmove *= -1;
+      move(&sm_move_data);
+    }
+
+    // predict same move just opposite side
+    if(accel_p_sm_w_sm_vq3.integer && orig_move_is_sm)
+    {
+      // sidemove predict
+      sm_move_data.cmd_forwardmove = 0;
+      sm_move_data.cmd_rightmove = game.pm.cmd.rightmove * -1;
+      sm_move_data.predict = PREDICT_OPPOSITE;
+      move(&sm_move_data);
+    }
+
+    if(accel_p_sm_w_strafe_vq3.integer && orig_move_is_strafe){
+      // sidemove predict
+      sm_move_data.cmd_forwardmove = 0;
+      sm_move_data.cmd_rightmove = game.pm.cmd.rightmove;
+      sm_move_data.predict = PREDICT_STRAFE_SM;
+      move(&sm_move_data);
+      // opposite side
+      sm_move_data.cmd_rightmove *= -1;
+      move(&sm_move_data);
+    }
+  }
+
+  // crouchjump
+  if(!accel_p_jc_overdraw.value){ // this check is flow guard, will be skipped from bottom
+    LABEL_JC_OVERDRAW:
+
+    if(accel_p_jc.integer)
+    {
+      move_data_t jc_move_data = {0};
+      jc_move_data.cmd_upmove = related_scale; // same
+      jc_move_data.mwindow_mode = accel_p_jc.integer & ACCEL_PREDICT_MWINDOW;
+      jc_move_data.component = accel_p_jc_component.integer;
+      jc_move_data.vcenter = accel_p_jc_vcenter.integer == ACCEL_VCENTER_GENERAL ?
+        accel_vcenter.integer : accel_p_jc_vcenter.integer;
+      jc_move_data.voffset = accel_p_jc_voffset.value;
+
+      // cpm
+      if(game.pm_ps.pm_flags & PMF_PROMODE)
+      {
+        // predict jump / crouch strafe while forwardmove
+        if(accel_p_jc_w_fm.integer && orig_move_is_fm)
+        {
+          // jc strafe
+          jc_move_data.cmd_forwardmove = game.pm.cmd.forwardmove;
+          jc_move_data.cmd_rightmove = related_scale;
+          jc_move_data.predict = PREDICT_JUMPCROUCH;
+          move(&jc_move_data);
+          // opposite side
+          jc_move_data.cmd_rightmove *= -1;
+          move(&jc_move_data);
+        }
+      }
+      else // vq3
+      {
+        // predict jump / crouch sidemove while sidemove (same)
+        if(accel_p_jc_w_sm_vq3.integer && orig_move_is_sm)
+        {
+          // jc sidemove
+          jc_move_data.cmd_forwardmove = 0;
+          jc_move_data.cmd_rightmove = game.pm.cmd.rightmove;
+          jc_move_data.predict = PREDICT_JUMPCROUCH_SM;
+          move(&jc_move_data);
+        }
+
+        // predict jump / crouch sidemove while strafe
+        if(accel_p_jcsm_w_strafe_vq3.integer && orig_move_is_strafe)
+        {
+          // jc sidemove
+          jc_move_data.cmd_forwardmove = 0;
+          jc_move_data.cmd_rightmove = game.pm.cmd.rightmove;
+          jc_move_data.predict = PREDICT_JUMPCROUCH_SM;
+          move(&jc_move_data);
+        }
+
+        // predict jump / crouch strafe while sidemove
+        if(accel_p_jcstrafe_w_sm_vq3.integer && orig_move_is_sm)
+        {
+          // jc strafe
+          jc_move_data.cmd_forwardmove = related_scale;
+          jc_move_data.cmd_rightmove = game.pm.cmd.rightmove;
+          jc_move_data.predict = PREDICT_JUMPCROUCH;
+          move(&jc_move_data);
+        }
+      }
+
+      // same for both physics
+      // predict jump / crouch strafe while strafe (same)
+      if((accel_p_jc_w_strafe.integer || accel_p_jc_w_strafe_vq3.integer)
+        && orig_move_is_strafe
+      ){
+        // js strafe
+        jc_move_data.cmd_forwardmove = game.pm.cmd.forwardmove;
+        jc_move_data.cmd_rightmove = game.pm.cmd.rightmove;
+        jc_move_data.predict = PREDICT_JUMPCROUCH;
+        move(&jc_move_data);
       }
     }
 
@@ -1140,13 +1245,13 @@ inline static void PmoveSingle(void)
     }
   }
 
-
-  if((key_forwardmove && key_rightmove // strafe
+  // check if regular move is disabled
+  if((orig_move_is_strafe // strafe
         && (
           (game.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_STRAFE))
           || (!(game.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_STRAFE))
         ))
-      || (!key_forwardmove && key_rightmove // sidemove
+      || (orig_move_is_sm // sidemove
         && (
           (game.pm_ps.pm_flags & PMF_PROMODE // cpm
             && (
@@ -1161,7 +1266,7 @@ inline static void PmoveSingle(void)
             )
           )
         ))
-      || (key_forwardmove && !key_rightmove // forwardmove
+      || (orig_move_is_fm // forwardmove
         && (
           (game.pm_ps.pm_flags & PMF_PROMODE && !(accel_show_move.integer & ACCEL_MOVE_FORWARD))
           || (!(game.pm_ps.pm_flags & PMF_PROMODE) && !(accel_show_move_vq3.integer & ACCEL_MOVE_FORWARD))
@@ -1173,13 +1278,23 @@ inline static void PmoveSingle(void)
     return; // -> regular move is disabled
   }
 
-  // restore original keys
-  game.pm.cmd.forwardmove = key_forwardmove;
-  game.pm.cmd.rightmove   = key_rightmove;
-  game.pm.cmd.upmove      = key_upmove;
+  // no need they were not overwrited
+  // // restore original keys
+  // game.pm.cmd.forwardmove = key_forwardmove;
+  // game.pm.cmd.rightmove   = key_rightmove;
+  // game.pm.cmd.upmove      = key_upmove;
+
+  move_data_t regular_move_data = {0};
+  regular_move_data.cmd_forwardmove = game.pm.cmd.forwardmove;
+  regular_move_data.cmd_rightmove = game.pm.cmd.rightmove;
+  regular_move_data.cmd_upmove = game.pm.cmd.upmove;
+  regular_move_data.mwindow_mode = accel.integer & ACCEL_MWINDOW;
+  regular_move_data.component = accel_component.integer;
+  regular_move_data.vcenter = accel_vcenter.integer;
+  regular_move_data.voffset = 0;
 
   // regular move
-  move(0, 0);
+  move(&regular_move_data);
  
   if(accel_p_jc_overdraw.value){
     goto LABEL_JC_OVERDRAW;
@@ -1191,22 +1306,30 @@ inline static void set_color_pred(int predict)
 {
   switch(predict){
     case PREDICT_OPPOSITE:{
-      trap_R_SetColor(a.colors[COLOR_ID(accel_p_opposite_rgbam)]);
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_opposite_rgba)]);
       break;
     }
     case PREDICT_SM_STRAFE:
     case PREDICT_FMNK_STRAFE:
     case PREDICT_SM_STRAFE_ADD:{
-      trap_R_SetColor(a.colors[COLOR_ID(accel_p_strafe_rgbam)]);
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_strafe_rgba)]);
       break;
     }
     case PREDICT_FMNK_SM:
     case PREDICT_STRAFE_SM:{
-      trap_R_SetColor(a.colors[COLOR_ID(accel_p_sidemove_rgbam)]);
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_sm_rgba)]);
       break;
     }
     case PREDICT_JUMPCROUCH:{
-      trap_R_SetColor(a.colors[COLOR_ID(accel_p_jc_rgbam)]);
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_jc_rgba)]);
+      break;
+    }
+    case PREDICT_JUMPCROUCH_SM:{
+      trap_R_SetColor(a.colors[COLOR_ID(accel_p_jcsm_rgba)]);
+      break;
+    }
+    case PREDICT_MIRROR:{
+      trap_R_SetColor(a.colors[COLOR_ID(accel_mirror_rgba)]);
       break;
     }
     case 0:
@@ -1224,10 +1347,9 @@ inline static void set_color(int id)
 }
 
 
-// does not set color
 // automatic vertical centering
 // do not use for prediction
-inline static void draw_positive(float x, float y, float w, float h)
+inline static void draw_positive(float x, float y, float w, float h, float _)
 {
   add_projection_x(&x, &w);
 
@@ -1236,7 +1358,6 @@ inline static void draw_positive(float x, float y, float w, float h)
   trap_R_DrawStretchPic(x, y, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
-// does not set color
 // automatic vertical centering
 // ment to be used for predictions -> because of offset
 inline static void draw_positive_o(float x, float y, float w, float h, float offset)
@@ -1248,39 +1369,16 @@ inline static void draw_positive_o(float x, float y, float w, float h, float off
   trap_R_DrawStretchPic(x, y + offset, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
-// (was used only for line mode)
-// // does not set color
-// // custom vertical centering
-// inline static void draw_positive_vc(float x, float y, float w, float h, float vh)
-// {
-//   add_projection_x(&x, &w);
-
-//   float y_target = y - zero_gap_scaled / 2;
-
-//   if(predict){
-//     y_target -= predict == PREDICT_JUMPCROUCH ? PREDICT_JUMPCROUCH_offset_scaled : predict_offset_scaled;
-//   }
-
-//   if(accel.integer & ACCEL_VCENTER){
-//     y_target -= vcenter_offset_scaled - vh / 2; // is h always positive ? might need abs here
-//   }
-
-//   trap_R_DrawStretchPic(x, y_target, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
-// }
-
-
-// does not set color
 // no vertical centering
 // used for fetures with its own vcenter settings (edges, window_end)
 // should be called indirectly like draw_positive_edge, draw_positive_window_end
-inline static void _draw_positive_nvc(float x, float y, float w, float h)
+inline static void _draw_positive_nvc(float x, float y, float w, float h, float _)
 {
   add_projection_x(&x, &w);
 
   trap_R_DrawStretchPic(x, y, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
-// does not set color
 // no vertical centering
 // used for fetures with its own vcenter settings (edges, window_end)
 inline static void draw_positive_o_nvc(float x, float y, float w, float h, float offset)
@@ -1288,13 +1386,12 @@ inline static void draw_positive_o_nvc(float x, float y, float w, float h, float
   add_projection_x(&x, &w);
 
   // if(predict){
-  //   y_target -= predict == PREDICT_JUMPCROUCH ? PREDICT_JUMPCROUCH_offset_scaled : predict_offset_scaled;
+  //   y_target -= predict == PREDICT_JUMPCROUCH ? predict_jumpcrouch_offset_scaled : predict_offset_scaled;
   // }
 
   trap_R_DrawStretchPic(x, y + offset, w, h, 0, 0, 0, 0, cgs.media.whiteShader);
 }
 
-// does not set color
 // automatic vertical centering
 inline static void draw_negative(float x, float y, float w, float h)
 {
@@ -1389,36 +1486,6 @@ inline static void PM_Friction(vec3_t velocity_io)
 }
 
 
-// following function is modified version of function taken from: https://github.com/ETrun/ETrun/blob/43b9e18b8b367b2c864bcfa210415372820dd212/src/game/bg_pmove.c#L839
-inline static void PM_Aircontrol(const vec3_t wishdir, vec3_t velocity_io) {
-  float zspeed, speed, dot, k;
-  int   i;
-
-  // if (!pms.pm.cmd.rightmove || wishspeed == 0.0) {
-  // 	return; 
-  // }
-
-  zspeed = velocity_io[2];
-  velocity_io[2] = 0;
-  speed = VectorNormalize(velocity_io);
-
-  dot = DotProduct(velocity_io, wishdir);
-  k = 32.0f * 150.0f * dot * dot * pm_frametime;
-
-  if (dot > 0) {
-    for (i = 0; i < 2; ++i) {
-      velocity_io[i] = velocity_io[i] * speed + wishdir[i] * k;
-    }
-    VectorNormalize(velocity_io);
-  }
-
-  for (i = 0; i < 2; ++i) {
-    velocity_io[i] *= speed;
-  }
-  velocity_io[2] = zspeed;
-}
-
-
 // following function is taken from: https://github.com/ec-/baseq3a/blob/d851fddadf1c2690ac508b8fc0b18bddba3d93d0/code/game/bg_pmove.c#L129
 /*
 ==================
@@ -1488,7 +1555,7 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
   normalizer_inv = 1 / normalizer;
 
   // calc speed delta
-  VectorCopy(a.velocity, velocity);
+  VectorCopy(a.velocity_s, velocity);
   PM_Friction(velocity);
 
   set_speed_delta_job_data(
@@ -1527,6 +1594,7 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
   // pick speed delta component
   switch(predict){
     case PREDICT_JUMPCROUCH:
+    case PREDICT_JUMPCROUCH_SM:
       component = accel_p_jc_component.integer;
       break;
     case PREDICT_FMNK_STRAFE:
@@ -1579,7 +1647,7 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
       // automatically omit negative accel when plotting predictions
       // also when negatives are disabled ofc
       speed_delta_component[i] <= 0
-      && (predict || accel_neg_mode.value == 0)
+      && (predict || accel_negative.value == 0)
     ){
       omit = 1;
       continue;
@@ -1697,7 +1765,7 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
   // determine the window bar (window bar is build-in now)
 
   // DotProduct2D(velocity, camera) < 0
-  opposite_facing = cosf(a.yaw_angle) * a.velocity[0] + sinf(a.yaw_angle) * a.velocity[1] < 0;
+  opposite_facing = cosf(a.yaw_angle) * a.velocity_s[0] + sinf(a.yaw_angle) * a.velocity_s[1] < 0;
   // ^ true if velocity is behind camera
   
   yaw_min_distance = 2 * M_PI; // MAX
@@ -1744,7 +1812,7 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
   #endif
 
   // when drawing just window bar skip all other positive, except when window_grow_threshold is reached
-  if(main_window_bar && ((!predict && accel.integer & ACCEL_WINDOW) || (predict && predict_window)))
+  if(main_window_bar && ((!predict && accel.integer & ACCEL_MWINDOW) || (predict && predict_window)))
   {    
     // grow positive both sides 
     start = main_window_bar;
@@ -1802,10 +1870,10 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
   if(!predict && main_window_bar)
   {
     // aim zone
-    if(accel_window_end.integer){
+    if(accel_mwindow_end.integer){
       // relative / absolute size switch
-      if(accel_window_end.integer & ACCEL_WINDOW_END_RELATIVE_SIZE){
-        window_end_size_calculated = (accel_window_end_size.value / 100) * main_window_bar->iwidth * a.to_real_pixel;
+      if(accel_mwindow_end.integer & ACCEL_MWINDOW_END_RELATIVE_SIZE){
+        window_end_size_calculated = (accel_mwindow_end_size.value / 100) * main_window_bar->iwidth * a.to_real_pixel;
       }
       else{
         window_end_size_calculated = a.window_end_size_scaled;
@@ -1860,7 +1928,7 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
         height = bar->height;
 
         if(!predict && bar == main_window_bar){
-          if(accel_window_end.integer & ACCEL_WINDOW_END_SUBTRACT && window_end_size_calculated > 0){
+          if(accel_mwindow_end.integer & ACCEL_MWINDOW_END_SUBTRACT && window_end_size_calculated > 0){
             // cutting the main window end off
             if(window_end_on_right_side){
               draw_positive(bar->ix * a.to_real_pixel, bar->y, bar->iwidth * a.to_real_pixel - window_end_size_calculated, height);
@@ -1885,11 +1953,11 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
         // we can get here only when:
         // prediction == 0
         // && (
-        //  accel_neg_mode.value == ACCEL_NEG_MODE_ENABLED
-        //  || accel_neg_mode.value == ACCEL_NEG_MODE_ADJECENT
+        //  accel_neg_mode.value == ACCEL_NEGATIVE_ENABLED
+        //  || accel_neg_mode.value == ACCEL_NEGATIVE_ADJECENT
         // )
         // skip non adjecent negatives
-        if((accel_neg_mode.value == ACCEL_NEG_MODE_ADJECENT)
+        if((accel_negative.value == ACCEL_NEGATIVE_ADJECENT)
             &&
             // is not positive left adjecent
             !(
@@ -1934,7 +2002,7 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
   // specific to main window bar so no need to have it in bar loop
   if(main_window_bar){
     // main window end
-    if(accel_window_end.integer){
+    if(accel_mwindow_end.integer){
       float window_end_offset = 0;
       // set offset based on the side
       if(window_end_on_right_side){
@@ -1943,7 +2011,7 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
       }
 
       // ugly but most straight forward
-      if(accel_window_end.integer & ACCEL_WINDOW_END_HL
+      if(accel_mwindow_end.integer & ACCEL_MWINDOW_END_HL
         && main_window_bar->ix * a.x_angle_ratio - window_end_offset * a.to_real_pixel_inv >= 0
         && main_window_bar->ix * a.x_angle_ratio - (window_end_offset + window_end_size_calculated) * a.to_real_pixel_inv <= 0){
         set_color(COLOR_ID(accel_window_end_hl_rgba));
@@ -1956,17 +2024,17 @@ inline static void PM_Accelerate(vec3_t wishdir, float const wishspeed, float co
 
       height = main_window_bar->height;
 
-      if(accel_window_end_height.value > 0){
-        height = accel_window_end.integer & ACCEL_WINDOW_END_RELATIVE_HEIGHT ? (accel_window_end_height.value / 100) * height : a.window_end_height_scaled;
+      if(accel_mwindow_end_height.value > 0){
+        height = accel_mwindow_end.integer & ACCEL_MWINDOW_END_RELATIVE_HEIGHT ? (accel_mwindow_end_height.value / 100) * height : a.window_end_height_scaled;
       }
 
-      if(accel_window_end_height.value > 0 && height < a.window_end_min_height_scaled){
+      if(accel_mwindow_end_height.value > 0 && height < a.window_end_min_height_scaled){
         height = a.window_end_min_height_scaled;
       }
 
       float y_target = a.hud_ypos_scaled - height;
 
-      if(accel_window_end_voffset.value > 0){
+      if(accel_mwindow_end_voffset.value > 0){
         y_target -= a.window_end_voffset_scaled;
       }
      
@@ -2098,15 +2166,15 @@ PAL_AirMove
 
 ===================
 */
-static void PM_AirMove( int predict, int predict_window ) {
+static void PM_AirMove( const move_data_t *move_data ) {
   int			i;
   vec3_t		wishvel;
   vec3_t		wishdir;
   float		wishspeed;
   float		scale;
 
-
-  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_JUMPCROUCH ?
+  // this one is pretty interesting, because its based on speed
+  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_JUMPCROUCH || predict == PREDICT_JUMPCROUCH_SM ?
     PM_CmdScale(&game.pm_ps, &game.pm.cmd) :
     PM_AltCmdScale(&game.pm_ps, &game.pm.cmd);
 
@@ -2152,7 +2220,7 @@ PAL_WalkMove
 
 ===================
 */
-static void PM_WalkMove( int predict, int predict_window ) {
+static void PM_WalkMove( const move_data_t *move_data ) {
   int			i;
   vec3_t		wishvel;
   vec3_t		wishdir;
@@ -2175,7 +2243,7 @@ static void PM_WalkMove( int predict, int predict_window ) {
     return;
   }
 
-  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_JUMPCROUCH ?
+  scale = accel_trueness.integer & ACCEL_TN_JUMPCROUCH || predict == PREDICT_JUMPCROUCH || predict == PREDICT_JUMPCROUCH_SM ?
   PM_CmdScale(&game.pm_ps, &game.pm.cmd) :
   PM_AltCmdScale(&game.pm_ps, &game.pm.cmd);
 
