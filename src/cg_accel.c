@@ -2410,11 +2410,11 @@ static void PM_WalkMove( void ) {
   VectorNormalize (a.pml.forward); // aprox. 1 unit in space facing forward based on cameraview
   VectorNormalize (a.pml.right); // aprox. 1 unit in space facing right based on cameraview
 
-  for ( i = 0 ; i < 2 ; i++ ) {
+  for ( i = 0 ; i < 3 ; i++ ) {
     wishvel[i] = a.pml.forward[i]*a.pm.cmd.forwardmove + a.pml.right[i]*a.pm.cmd.rightmove; // added fractions of direction (the camera once) increased over move (127 run speed)
   }
   // when going up or down slopes the wish velocity should Not be zero // but its value doesnt come from anywhere here so wtf...
-  wishvel[2] = 0;
+  //wishvel[2] = 0;
 
   VectorCopy (wishvel, wishdir);
   wishspeed = VectorNormalize(wishdir); 

@@ -1,4 +1,8 @@
 # Changelog
+## [Alpha v0.3.2]
+### Fixed
+- Ground zones on tilted plane were wrong
+
 ## [Alpha v0.3.1]
 ### Fixed
 - While using dynamic acceleration value correction the hud disapear at speeds over 7000ups, now since 6000ups its no longer dynamic.
