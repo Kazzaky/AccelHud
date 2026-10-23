@@ -207,7 +207,7 @@ static cvarTable_t accel_cvars[] = {
 
   { &accel_predict_strafe_rgba, "p_accel_p_strafe_rgbam", "-.2 -.1 .4 -.4", CVAR_ARCHIVE_ND },
   { &accel_predict_sidemove_rgba, "p_accel_p_sm_rgbam", ".4 -.1 -.2 -.4", CVAR_ARCHIVE_ND },
-  { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 .-8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
+  { &accel_predict_opposite_rgba, "p_accel_p_opposite_rgbam", ".8 -.8 .8 -.3", CVAR_ARCHIVE_ND }, // 1.0 0.9 0.2 0.6
   { &accel_predict_crouchjump_rgba, "p_accel_p_cj_rgbam", "1 1 1 1", CVAR_ARCHIVE_ND },
 
   { &accel_window_center_rgba, "p_accel_window_center_rgba", "1 .4 .2 .9", CVAR_ARCHIVE_ND },
